@@ -11,16 +11,15 @@ from pypdf import PdfReader
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
 # Section header patterns for insurance legal documents
-# ---------------------------------------------------------------------------
+
 _SECTION_PATTERNS = [
-    r"^SECTION\s+(I{1,4}|IV|V)\b",          # SECTION I, II, III, IV
-    r"^Coverage\s+[A-F]\b",                  # Coverage A through F
-    r"^\d+\.\d*\s+[A-Z]",                    # 7. or 7.3 followed by capital
-    r"^[A-Z][A-Z\s]{4,}$",                   # all-caps lines: AGREEMENT, DEFINITIONS
+    r"^\s*SECTION\s+(I{1,4}|IV|V|VI|VII|VIII|IX|X)\b",  # SECTION I–X, tolerates leading whitespace from PDF
+    r"^\s*Coverage\s+[A-F]\b",                           # Coverage A through F
+    r"^\d+\.\d*\s+[A-Z]",                                # 7. or 7.3 followed by capital
+    r"^[A-Z][A-Z\s]{4,}$",                               # all-caps lines: AGREEMENT, DEFINITIONS
 ]
-_SECTION_RE = re.compile("|".join(_SECTION_PATTERNS), re.MULTILINE)
+_SECTION_RE = re.compile("|".join(_SECTION_PATTERNS), re.MULTILINE | re.IGNORECASE)
 
 _MAX_CHUNK_CHARS = 2000   # ~500 tokens at ~4 chars/token
 _OVERLAP_CHARS   = 300    # ~15% overlap to preserve cross-sentence context
@@ -53,12 +52,44 @@ def detect_document_type(filename: str) -> str:
     return "unknown"
 
 
+def detect_jurisdiction(filename: str) -> str:
+    """State code is stored per-chunk so the retriever can scope a query to
+    a single state amendment without scanning unrelated documents."""
+    stem = Path(filename).stem.lower()
+    if stem.startswith("amendment_"):
+        code = stem.split("_")[1].upper()
+        if code in {"CA", "TX", "NY", "FL"}:
+            return code
+    return "all"
+
+
+def extract_cross_references(text: str) -> list[str]:
+    """Cross-references tie chunks to the clauses they modify; storing them in
+    metadata lets the retriever surface related chunks without a second pass."""
+    patterns = [
+        r"Section\s+\d+\.\d+",          # Section 7.3
+        r"Section\s+(?:I{1,4}|IV|V)\b", # Section I, II, III, IV
+        r"NX-END-\d{2}",                 # NX-END-01 … NX-END-99
+        r"NX-(?:HO|CP)-\d+",            # NX-HO-3, NX-CP-1, NX-HO-4
+    ]
+    found: list[str] = []
+    for pattern in patterns:
+        found.extend(re.findall(pattern, text))
+    return list(dict.fromkeys(found))  # deduplicate while preserving order
+
+
 def _split_with_overlap(text: str, max_chars: int, overlap: int) -> list[str]:
     """Fixed-size split with overlap so that sentences straddling a boundary
     appear in both adjacent chunks and are never silently dropped."""
     chunks, start = [], 0
     while start < len(text):
         end = start + max_chars
+        if end < len(text):
+            # walk back to nearest word boundary to avoid splitting mid-word
+            while end > start and text[end] != ' ':
+                end -= 1
+            if end == start:
+                end = start + max_chars  # no space found, fall back to hard cut
         chunks.append(text[start:end])
         start = end - overlap
     return [c for c in chunks if c.strip()]
@@ -68,8 +99,9 @@ def chunk_document(pages: list[dict], filename: str) -> list[dict]:
     """Section-aware chunking keeps legal cross-references intact. Splitting
     mid-clause (e.g. inside Section 7.3) would strip the section number from
     the surrounding text, making cosine retrieval miss it entirely."""
-    doc_type = detect_document_type(filename)
-    stem = Path(filename).stem
+    doc_type     = detect_document_type(filename)
+    jurisdiction = detect_jurisdiction(filename)
+    stem         = Path(filename).stem
 
     # Merge all pages into one string; record where each page boundary falls.
     full_text = ""
@@ -90,6 +122,10 @@ def chunk_document(pages: list[dict], filename: str) -> list[dict]:
     if matches:
         boundaries = [m.start() for m in matches] + [len(full_text)]
         raw_sections: list[tuple[str, str]] = []
+        # Preserve text before the first header (title, AGREEMENT, etc.) so it
+        # isn't silently dropped from the index.
+        if matches[0].start() > 0:
+            raw_sections.append(("PREAMBLE", full_text[:matches[0].start()]))
         for i, start in enumerate(boundaries[:-1]):
             header_match = matches[i]
             title = header_match.group().strip()
@@ -113,13 +149,15 @@ def chunk_document(pages: list[dict], filename: str) -> list[dict]:
             # Find approximately where in the original document this chunk starts.
             offset = full_text.find(sub[:50])
             chunks.append({
-                "chunk_id":     f"{stem}_chunk_{idx}",
-                "text":         sub.strip(),
-                "source":       filename,
-                "doc_type":     doc_type,
-                "page_start":   char_to_page(max(offset, 0)),
-                "section_title": title,
-                "char_count":   len(sub.strip()),
+                "chunk_id":       f"{stem}_chunk_{idx}",
+                "text":           sub.strip(),
+                "source":         filename,
+                "doc_type":       doc_type,
+                "jurisdiction":   jurisdiction,
+                "page_start":     char_to_page(max(offset, 0)),
+                "section_title":  title,
+                "related_sections": extract_cross_references(sub),
+                "char_count":     len(sub.strip()),
             })
 
     return chunks
@@ -140,9 +178,16 @@ def embed_chunks(chunks: list[dict]) -> list[dict]:
             for chunk, emb_obj in zip(batch, response.data):
                 embedded.append({**chunk, "embedding": emb_obj.embedding})
         except Exception as exc:
-            # Log and skip the whole batch rather than crashing the pipeline.
-            for chunk in batch:
-                print(f"[WARN] embedding failed for {chunk['chunk_id']}: {exc}")
+            # 429 rate-limit errors are transient; one retry after a longer
+            # sleep recovers most failures without adding complex backoff logic.
+            time.sleep(5)
+            try:
+                response = client.embeddings.create(model="mistral-embed", inputs=texts)
+                for chunk, emb_obj in zip(batch, response.data):
+                    embedded.append({**chunk, "embedding": emb_obj.embedding})
+            except Exception as exc2:
+                for chunk in batch:
+                    print(f"[WARN] embedding failed for {chunk['chunk_id']}: {exc2}")
         if batch_start + batch_size < len(chunks):
             time.sleep(1)
 
@@ -167,7 +212,8 @@ def save_to_vector_store(chunks: list[dict], store_dir: Path) -> None:
 def load_vector_store(store_dir: Path) -> tuple[np.ndarray, list[dict]]:
     """Called at query time, not during ingestion. Loads the pre-built index
     from disk so the API server doesn't need to re-embed anything on startup."""
-    embeddings = np.load(store_dir / "embeddings.npy")
+    # allow_pickle=False prevents arbitrary code execution from malicious .npy files
+    embeddings = np.load(store_dir / "embeddings.npy", allow_pickle=False)
     metadata   = json.loads((store_dir / "metadata.json").read_text(encoding="utf-8"))
     return embeddings, metadata
 
