@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 vector_store/*.npy
 vector_store/*.pkl
+*.txt
+.DS_Store
+data/.DS_Store
