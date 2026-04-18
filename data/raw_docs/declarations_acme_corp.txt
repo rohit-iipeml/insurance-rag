@@ -1,0 +1,52 @@
+**NEXUS INSURANCE COMPANY**
+**COMMERCIAL PROPERTY INSURANCE DECLARATIONS PAGE**
+
+**POLICY NUMBER:** NX-CP-2024-002
+**NAMED INSURED:** Acme Corporation
+**MAILING ADDRESS:** 500 Industrial Parkway, Houston, Texas 77001
+**POLICY PERIOD:** March 1, 2024, 12:01 A.M. (local time) to March 1, 2025, 12:01 A.M. (local time)
+
+**SECTION I – PROPERTY COVERAGES**
+
+**1. Covered Property**
+a. **Building:** $2,000,000
+b. **Business Personal Property:** $500,000
+c. **Business Income (and Extra Expense):** $750,000
+
+**2. Deductible**
+a. The deductible stated in the Property Coverage Form applies to each occurrence, except as otherwise provided. The deductible is $5,000.
+
+**3. Additional Conditions**
+a. The Texas windstorm and hail deductible, as required by Texas law and endorsed herein, applies to losses caused by windstorm or hail. Said deductible is in addition to the standard deductible stated above.
+
+**SECTION II – LIABILITY COVERAGES**
+
+**4. General Liability**
+a. **Each Occurrence Limit:** $1,000,000
+b. **General Aggregate Limit:** $2,000,000
+c. **Products-Completed Operations Aggregate Limit:** $2,000,000
+
+**SECTION III – ENDORSEMENTS**
+
+**5. Endorsements Attached**
+a. **NX-END-05 – Home Business Liability:** Provides liability coverage for incidental business operations conducted from the insured premises.
+b. **NX-TX-AMD – Texas State Amendment:** Incorporates all statutory amendments required by the State of Texas.
+
+**SECTION IV – PREMIUM AND TERMS**
+
+**6. Annual Premium:** $18,500
+a. This premium is based on the coverages, limits, and deductibles shown herein and is subject to audit as provided in the policy.
+
+**7. Cancellation**
+a. This policy may be canceled by the Named Insured or Nexus Insurance Company in accordance with the provisions of the policy.
+
+**8. Service of Suit**
+a. Nexus Insurance Company hereby designates the Insurance Commissioner of Texas as its true and lawful attorney upon whom may be served any and all lawful process in any action, suit, or proceeding instituted against it in the State of Texas.
+
+**IN WITNESS WHEREOF**, Nexus Insurance Company has caused this Declarations Page to be executed by its duly authorized officer.
+
+**NEXUS INSURANCE COMPANY**
+By: ___________________________
+Name: [Authorized Officer]
+Title: [Title]
+Date: February 28, 2024

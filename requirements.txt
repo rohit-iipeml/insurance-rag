@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+pypdf
+mistralai
+numpy
+streamlit
+python-dotenv
+pytest
+reportlab
