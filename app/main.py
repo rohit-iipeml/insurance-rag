@@ -1,12 +1,18 @@
 import os
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from mistralai import Mistral
+from pydantic import BaseModel
 
-from src.ingestion.pipeline import ingest_pdfs
+from src.generation.pipeline import detect_intent_and_decompose, run_generation_pipeline
+from src.ingestion.pipeline import ingest_pdfs, load_bm25_index, load_vector_store
+from src.retrieval.pipeline import is_conversational, is_pii_query, merge_subquery_results, retrieve
 
 load_dotenv()
 
@@ -16,9 +22,33 @@ TEMP_DIR         = Path("temp")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB in bytes
 
+_REFUSAL_INTENTS = {"pii_sensitive", "legal_advice", "out_of_scope"}
+
+
+class QueryRequest(BaseModel):
+    query: str
+    jurisdiction: str | None = None  # optional state filter e.g. 'CA', 'TX'
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load vector store and BM25 index once at startup — reloading per query
+    # would add 50-150ms disk I/O overhead with no benefit at this corpus size.
+    # Both are read-only after loading so concurrent queries are safe.
+    if VECTOR_STORE_DIR.exists() and (VECTOR_STORE_DIR / "embeddings.npy").exists():
+        app.state.embeddings, app.state.metadata = load_vector_store(VECTOR_STORE_DIR)
+        app.state.bm25_index  = load_bm25_index(VECTOR_STORE_DIR)
+        app.state.index_loaded = True
+    else:
+        app.state.index_loaded = False
+    yield
+    # Nothing to clean up — numpy arrays are garbage collected automatically
+
+
 app = FastAPI(
     title="Insurance RAG API",
     description="RAG pipeline for insurance policy document Q&A",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -55,6 +85,12 @@ async def ingest(files: list[UploadFile] = File(default=[])) -> dict:
                 )
             result = ingest_pdfs(pdf_paths, VECTOR_STORE_DIR)
 
+        # Reload index into memory after ingestion so queries use fresh data
+        # without requiring a server restart.
+        app.state.embeddings, app.state.metadata = load_vector_store(VECTOR_STORE_DIR)
+        app.state.bm25_index  = load_bm25_index(VECTOR_STORE_DIR)
+        app.state.index_loaded = True
+
         return {
             "status":            "success",
             "total_pdfs":        result["total_pdfs"],
@@ -62,6 +98,84 @@ async def ingest(files: list[UploadFile] = File(default=[])) -> dict:
             "bm25_unique_terms": result["bm25_unique_terms"],
             "message":           f"Ingested {result['total_pdfs']} PDF(s) into {result['total_chunks']} chunks.",
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query")
+async def query(request: QueryRequest) -> dict:
+    try:
+        if not app.state.index_loaded:
+            raise HTTPException(
+                status_code=503,
+                detail="Knowledge base not loaded. Please call POST /ingest first.",
+            )
+
+        q = request.query
+
+        if is_pii_query(q):
+            return {
+                "answer":  "This query contains sensitive personal information and cannot be processed.",
+                "sources": [],
+                "intent":  "pii_sensitive",
+            }
+
+        if is_conversational(q):
+            return {
+                "answer":  "I am an insurance policy assistant. Ask me about coverage, exclusions, deductibles, or policy terms.",
+                "sources": [],
+                "intent":  "conversational",
+            }
+
+        analysis = detect_intent_and_decompose(q)
+        intent          = analysis.get("intent", "retrieval")
+        sub_queries     = analysis.get("sub_queries", [{"query": q, "doc_type": None}])
+        answer_template = analysis.get("answer_template", "general")
+        refusal_reason  = analysis.get("refusal_reason")
+
+        if intent in _REFUSAL_INTENTS:
+            return {"answer": refusal_reason, "sources": [], "intent": intent}
+
+        # Embed and retrieve each sub-query independently — routing by doc_type
+        # lets each sub-query target the document category most likely to hold
+        # its answer, reducing noise in the merged context window.
+        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+        subquery_results: list[dict] = []
+
+        for sub in sub_queries:
+            embed_response  = client.embeddings.create(
+                model="mistral-embed",
+                inputs=[sub["query"]],
+            )
+            query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
+            result = retrieve(
+                query_embedding      = query_embedding,
+                query_text           = sub["query"],
+                embeddings_matrix    = app.state.embeddings,
+                metadata             = app.state.metadata,
+                bm25_index           = app.state.bm25_index,
+                doc_type_filter      = sub.get("doc_type"),
+            )
+            subquery_results.append(result)
+
+        merged     = merge_subquery_results(subquery_results)
+        generation = run_generation_pipeline(
+            query               = q,
+            chunks              = merged["chunks"],
+            answer_template     = answer_template,
+            sufficient_evidence = merged["sufficient_evidence"],
+        )
+
+        return {
+            "answer":           generation["answer"],
+            "sources":          generation["sources"],
+            "citation_check":   generation["citation_check"],
+            "intent":           intent,
+            "answer_template":  answer_template,
+        }
+
     except HTTPException:
         raise
     except Exception as e:
