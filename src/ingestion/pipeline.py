@@ -1,7 +1,9 @@
 import json
+import math
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -218,6 +220,96 @@ def load_vector_store(store_dir: Path) -> tuple[np.ndarray, list[dict]]:
     return embeddings, metadata
 
 
+def tokenize(text: str) -> list[str]:
+    # Dots and hyphens are kept so legal identifiers like 'Section 7.3' and
+    # 'NX-END-02' survive tokenization intact — splitting on them would destroy
+    # the exact-match advantage BM25+ provides over semantic search.
+    cleaned = re.sub(r"[^a-z0-9.\-\s]", "", text.lower())
+    return [t for t in cleaned.split() if t]
+
+
+def build_bm25_plus_index(chunks: list[dict]) -> dict:
+    # BM25+ chosen over standard BM25 because our corpus has documents of very
+    # different lengths (base policies ~1000 tokens vs endorsements ~300 tokens).
+    # Standard BM25 would unfairly penalise long base-policy chunks that contain
+    # a searched term. BM25+ adds delta=1.0 to the TF component to fix this.
+    # BM25L was considered but rejected — it is designed for whole-document
+    # retrieval over very long documents, not for pre-chunked corpora like ours.
+    k1, b, delta = 1.5, 0.75, 1.0
+
+    tokens_per_chunk  = [tokenize(c["text"]) for c in chunks]
+    chunk_lengths     = [len(t) for t in tokens_per_chunk]
+    avg_chunk_length  = sum(chunk_lengths) / len(chunk_lengths) if chunk_lengths else 1.0
+    tf_per_chunk      = [dict(Counter(tokens)) for tokens in tokens_per_chunk]
+
+    doc_freqs: dict[str, int] = {}
+    for tf in tf_per_chunk:
+        for term in tf:
+            doc_freqs[term] = doc_freqs.get(term, 0) + 1
+
+    return {
+        "doc_freqs":        doc_freqs,
+        "tf_per_chunk":     tf_per_chunk,
+        "chunk_lengths":    chunk_lengths,
+        "avg_chunk_length": avg_chunk_length,
+        "total_chunks":     len(chunks),
+        "chunk_ids":        [c["chunk_id"] for c in chunks],
+        "k1":               k1,
+        "b":                b,
+        "delta":            delta,
+    }
+
+
+def bm25_plus_score(query: str, bm25_index: dict) -> list[tuple[int, float]]:
+    # Only chunks with score > 0 are returned — a chunk scores 0 if it shares
+    # no terms with the query, meaning it contributes only noise to RRF fusion.
+    N           = bm25_index["total_chunks"]
+    doc_freqs   = bm25_index["doc_freqs"]
+    tf_per_chunk = bm25_index["tf_per_chunk"]
+    chunk_lengths = bm25_index["chunk_lengths"]
+    avg_len     = bm25_index["avg_chunk_length"]
+    k1          = bm25_index["k1"]
+    b           = bm25_index["b"]
+    delta       = bm25_index["delta"]
+
+    query_terms = tokenize(query)
+    scores: list[float] = [0.0] * N
+
+    for term in query_terms:
+        df  = doc_freqs.get(term, 0)
+        if df == 0:
+            continue
+        idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+        for i, tf in enumerate(tf_per_chunk):
+            tf_td = tf.get(term, 0)
+            if tf_td == 0:
+                continue
+            norm = k1 * (1 - b + b * chunk_lengths[i] / avg_len)
+            tf_norm = delta + (tf_td * (k1 + 1)) / (tf_td + norm)
+            scores[i] += idf * tf_norm
+
+    return sorted(
+        [(i, s) for i, s in enumerate(scores) if s > 0],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+
+def save_bm25_index(bm25_index: dict, store_dir: Path) -> None:
+    # Saved separately from embeddings.npy so the keyword index can be
+    # inspected and debugged without loading the float matrix.
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "bm25_index.json").write_text(
+        json.dumps(bm25_index, indent=2), encoding="utf-8"
+    )
+
+
+def load_bm25_index(store_dir: Path) -> dict:
+    # Loaded once at query time and kept in memory — the index is a plain
+    # dict so no special deserialisation is needed.
+    return json.loads((store_dir / "bm25_index.json").read_text(encoding="utf-8"))
+
+
 def ingest_pdfs(pdf_paths: list[Path], store_dir: Path) -> dict:
     """Full pipeline: extract → chunk across all PDFs, then embed in one
     batched pass, then persist. Embedding all chunks together maximises batch
@@ -232,8 +324,12 @@ def ingest_pdfs(pdf_paths: list[Path], store_dir: Path) -> dict:
     embedded = embed_chunks(all_chunks)
     save_to_vector_store(embedded, store_dir)
 
+    bm25_index = build_bm25_plus_index(embedded)
+    save_bm25_index(bm25_index, store_dir)
+
     return {
-        "total_pdfs":   len(pdf_paths),
-        "total_chunks": len(embedded),
-        "store_dir":    str(store_dir),
+        "total_pdfs":        len(pdf_paths),
+        "total_chunks":      len(embedded),
+        "store_dir":         str(store_dir),
+        "bm25_unique_terms": len(bm25_index["doc_freqs"]),
     }
