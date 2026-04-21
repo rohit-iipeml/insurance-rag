@@ -7,3 +7,5 @@ vector_store/*.pkl
 *.txt
 .DS_Store
 data/.DS_Store
+node_modules/
+ui/react_app/dist/
