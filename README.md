@@ -238,3 +238,22 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 - **Cross-encoder reranking** — a second-stage reranker would improve precision at the cost of latency
 - **Memory-mapped numpy** — for corpora exceeding 100k chunks, np.memmap would reduce memory footprint
 - **Multi-tenant support** — user-level document isolation not yet implemented
+
+---
+
+## Evaluation
+
+`scripts/eval.py` runs 10 hardcoded ground-truth test cases directly against the pipeline — importing `load_vector_store`, `retrieve`, `detect_intent_and_decompose`, and `run_generation_pipeline` from `src/` without making any HTTP requests. Guard cases (PII, conversational) pass on intent match alone; retrieval cases pass when the expected source filename appears in the returned sources and/or the expected string appears in the answer; Q10 (out-of-scope) passes if the answer contains "insufficient" or no sources are returned. Run it with `python scripts/eval.py` after ingesting documents.
+
+| ID | Query (abbreviated) | Expected intent | Expected source | Pass? |
+|----|---------------------|-----------------|-----------------|-------|
+| Q1 | Coverage A limit — John Smith | retrieval | declarations_john_smith | — |
+| Q2 | Business Income limit — Acme Corp | retrieval | declarations_acme_corp | — |
+| Q3 | Hurricane deductible — Florida | retrieval | amendment_FL | — |
+| Q4 | Cancellation notice period — California | retrieval | amendment_CA | — |
+| Q5 | NX-END-02 vs Section 7.3 | retrieval | endorsement_02 | — |
+| Q6 | Frozen pipes / 65-day vacancy | retrieval | base_policy_homeowners | — |
+| Q7 | Sewer backup coverage | retrieval | endorsement_03 | — |
+| Q8 | Hello, what can you help me with? | conversational | — | — |
+| Q9 | SSN in query | pii_sensitive | — | — |
+| Q10 | Cyber attacks on smart home devices | retrieval | (none — insufficient evidence expected) | — |
