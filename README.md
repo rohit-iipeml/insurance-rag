@@ -140,7 +140,11 @@ Insurance_rag/
 │   └── generation/
 │       └── pipeline.py      # Intent detection, query decomposition, generation, citation verification
 ├── ui/
-│   └── chat.py              # Streamlit chat interface
+│   └── react_app/           # React frontend (Vite)
+│       └── src/
+│           ├── App.jsx
+│           ├── api.js
+│           └── components/  # Sidebar, ChatWindow, MessageBubble, SourcesDrawer, UploadPanel, WelcomeScreen
 ├── data/
 │   └── raw_docs/            # PDF knowledge base (19 documents)
 ├── vector_store/            # embeddings.npy, metadata.json, bm25_index.json
@@ -192,25 +196,16 @@ curl -X POST http://0.0.0.0:8000/ingest \
 
 ### Run the Chat UI
 
-```bash
-streamlit run ui/chat.py
-```
-
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
-## Running the Frontend
-
-### Prerequisites
+#### Prerequisites
 - Node.js 18+
 
-### Setup
 ```bash
 cd ui/react_app
 npm install
 npm run dev
 ```
 
-The React app runs on http://localhost:5173 and expects the FastAPI backend running at http://localhost:8000. Start the backend first.
+Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI backend must be running at http://localhost:8000 first.
 
 ### API Endpoints
 
@@ -231,7 +226,6 @@ The React app runs on http://localhost:5173 and expects the FastAPI backend runn
 | [Mistral AI](https://docs.mistral.ai/) | 1.2.5 | LLM and embeddings API |
 | [pypdf](https://pypdf.readthedocs.io/) | 6.10.2 | PDF text extraction |
 | [numpy](https://numpy.org/doc/) | 2.4.4 | Vector storage and cosine similarity |
-| [Streamlit](https://docs.streamlit.io/) | 1.56.0 | Chat UI |
 | [python-dotenv](https://pypi.org/project/python-dotenv/) | 1.2.2 | Environment variable management |
 | [ReportLab](https://docs.reportlab.com/) | 4.4.10 | PDF generation for synthetic documents |
 
