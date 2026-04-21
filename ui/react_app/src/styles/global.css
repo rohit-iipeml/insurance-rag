@@ -29,3 +29,10 @@ body {
   background: var(--bg);
   color: var(--text-primary);
 }
+
+.assistant-content p { margin: 0 0 8px 0; line-height: 1.65; }
+.assistant-content p:last-child { margin-bottom: 0; }
+.assistant-content ul, .assistant-content ol { padding-left: 20px; margin: 6px 0; }
+.assistant-content li { margin-bottom: 4px; line-height: 1.55; }
+.assistant-content strong { font-weight: 600; color: var(--text-primary); }
+.assistant-content code { font-size: 12px; background: #f0f0ec; padding: 1px 5px; border-radius: 4px; }

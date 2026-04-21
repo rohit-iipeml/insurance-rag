@@ -1,4 +1,4 @@
-export default function Sidebar({ activeTab, setActiveTab, onNewChat, recentQueries }) {
+export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, activeSessionId, onSessionClick }) {
   const navItems = [
     { id: "chat", label: "💬 Chat" },
     { id: "upload", label: "📁 Upload Docs" },
@@ -85,42 +85,34 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, recentQuer
         })}
       </div>
 
-      {/* Recent queries */}
-      {recentQueries.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 500,
-              color: "var(--text-secondary)",
-              letterSpacing: "0.6px",
-              textTransform: "uppercase",
-              margin: "16px 0 8px",
-            }}
-          >
+      {/* Recent sessions */}
+      {sessions.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)",
+                        letterSpacing: "0.6px", textTransform: "uppercase",
+                        margin: "16px 0 8px" }}>
             Recent
           </div>
-          {recentQueries.map((q, i) => {
-            const label = q.length > 40 ? q.slice(0, 40) + "…" : q;
-            return (
-              <div
-                key={i}
-                title={q}
-                style={{
-                  fontSize: 13,
-                  color: "var(--text-primary)",
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {label}
-              </div>
-            );
-          })}
-        </div>
+          {sessions.map(session => (
+            <div
+              key={session.id}
+              onClick={() => onSessionClick(session)}
+              style={{
+                fontSize: 13,
+                color: session.id === activeSessionId ? "var(--text-primary)" : "var(--text-secondary)",
+                padding: "6px 10px",
+                borderRadius: 6,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                background: session.id === activeSessionId ? "#eeeeeb" : "transparent",
+              }}
+            >
+              {session.title}
+            </div>
+          ))}
+        </>
       )}
 
       {/* Footer */}

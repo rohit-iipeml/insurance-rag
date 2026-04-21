@@ -17,13 +17,13 @@ export async function ingestFiles(files) {
   return res.json();
 }
 
-export async function queryRAGStream(query, onToken, onDone, onError) {
+export async function queryRAGStream(query, chatHistory, onToken, onDone, onSources, onError) {
   let res;
   try {
     res = await fetch(`${BASE_URL}/query/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, chat_history: chatHistory || [] }),
     });
   } catch (err) {
     onError(err.message);
@@ -56,31 +56,37 @@ export async function queryRAGStream(query, onToken, onDone, onError) {
 
     for (const event of events) {
       if (!event.trim()) continue;
-      // Each event line is "data: <content>"; collect all data lines for multi-line events
+      // Each event line is "data: <content>" — slice(6) removes exactly
+      // "data: " (6 chars) and preserves everything after, including any
+      // leading space that is part of the token itself.
       const content = event
         .split("\n")
         .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
+        .map((line) => line.startsWith("data: ") ? line.slice(6) : line.slice(5))
         .join("\n");
 
-      if (content === "[DONE]") {
+      if (content.trim() === "[DONE]") {
         onDone();
+        try {
+          const data = await queryRAG(query, chatHistory);
+          onSources(data);
+        } catch {}
         return;
       } else if (content.startsWith("[ERROR]")) {
-        onError(content.slice(7).trim());
+        onError(content.slice(7));
         return;
-      } else {
+      } else if (content.trim()) {
         onToken(content);
       }
     }
   }
 }
 
-export async function queryRAG(query) {
+export async function queryRAG(query, chatHistory) {
   const res = await fetch(`${BASE_URL}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, chat_history: chatHistory || [] }),
   });
   if (!res.ok) {
     let detail = res.statusText;

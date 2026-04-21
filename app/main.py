@@ -14,8 +14,10 @@ from pydantic import BaseModel
 
 from src.generation.pipeline import (
     GENERATION_MODEL,
+    _mistral_with_retry,
     build_generation_messages,
     detect_intent_and_decompose,
+    rewrite_query_with_history,
     run_generation_pipeline,
 )
 from src.ingestion.pipeline import ingest_pdfs, load_bm25_index, load_vector_store
@@ -35,6 +37,7 @@ _REFUSAL_INTENTS = {"pii_sensitive", "legal_advice", "out_of_scope"}
 class QueryRequest(BaseModel):
     query: str
     jurisdiction: str | None = None  # optional state filter e.g. 'CA', 'TX'
+    chat_history: list[dict] | None = None
 
 
 @asynccontextmanager
@@ -125,26 +128,39 @@ async def query(request: QueryRequest) -> dict:
 
         if is_pii_query(q):
             return {
-                "answer":  "This query contains sensitive personal information and cannot be processed.",
-                "sources": [],
-                "intent":  "pii_sensitive",
+                "answer":          "This query contains sensitive personal information and cannot be processed.",
+                "sources":         [],
+                "intent":          "pii_sensitive",
+                "citation_check":  {"verified_citations": [], "hallucinated_citations": [], "is_clean": True},
+                "answer_template": None,
             }
 
         if is_conversational(q):
             return {
-                "answer":  "I am an insurance policy assistant. Ask me about coverage, exclusions, deductibles, or policy terms.",
-                "sources": [],
-                "intent":  "conversational",
+                "answer":          "I am an insurance policy assistant. Ask me about coverage, exclusions, deductibles, or policy terms.",
+                "sources":         [],
+                "intent":          "conversational",
+                "citation_check":  {"verified_citations": [], "hallucinated_citations": [], "is_clean": True},
+                "answer_template": None,
             }
 
-        analysis = detect_intent_and_decompose(q)
+        rewritten_q = rewrite_query_with_history(q, request.chat_history or [])
+        print(f"[REWRITE] {q!r} -> {rewritten_q!r}")
+
+        analysis = detect_intent_and_decompose(rewritten_q)
         intent          = analysis.get("intent", "retrieval")
-        sub_queries     = analysis.get("sub_queries", [{"query": q, "doc_type": None}])
+        sub_queries     = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
         answer_template = analysis.get("answer_template", "general")
         refusal_reason  = analysis.get("refusal_reason")
 
         if intent in _REFUSAL_INTENTS:
-            return {"answer": refusal_reason, "sources": [], "intent": intent}
+            return {
+                "answer":          refusal_reason,
+                "sources":         [],
+                "intent":          intent,
+                "citation_check":  {"verified_citations": [], "hallucinated_citations": [], "is_clean": True},
+                "answer_template": None,
+            }
 
         # Embed and retrieve each sub-query independently — routing by doc_type
         # lets each sub-query target the document category most likely to hold
@@ -153,9 +169,11 @@ async def query(request: QueryRequest) -> dict:
         subquery_results: list[dict] = []
 
         for sub in sub_queries:
-            embed_response  = client.embeddings.create(
-                model="mistral-embed",
-                inputs=[sub["query"]],
+            embed_response = _mistral_with_retry(
+                lambda s=sub: client.embeddings.create(
+                    model="mistral-embed",
+                    inputs=[s["query"]],
+                )
             )
             query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
             result = retrieve(
@@ -170,10 +188,11 @@ async def query(request: QueryRequest) -> dict:
 
         merged     = merge_subquery_results(subquery_results)
         generation = run_generation_pipeline(
-            query               = q,
+            query               = rewritten_q,
             chunks              = merged["chunks"],
             answer_template     = answer_template,
             sufficient_evidence = merged["sufficient_evidence"],
+            chat_history        = request.chat_history,
         )
 
         return {
@@ -223,9 +242,12 @@ async def query_stream(request: QueryRequest):
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*"},
             )
 
-        analysis       = detect_intent_and_decompose(q)
+        rewritten_q = rewrite_query_with_history(q, request.chat_history or [])
+        print(f"[REWRITE] {q!r} -> {rewritten_q!r}")
+
+        analysis       = detect_intent_and_decompose(rewritten_q)
         intent         = analysis.get("intent", "retrieval")
-        sub_queries    = analysis.get("sub_queries", [{"query": q, "doc_type": None}])
+        sub_queries    = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
         answer_template = analysis.get("answer_template", "general")
         refusal_reason = analysis.get("refusal_reason")
 
@@ -243,9 +265,11 @@ async def query_stream(request: QueryRequest):
         subquery_results: list[dict] = []
 
         for sub in sub_queries:
-            embed_response  = client.embeddings.create(
-                model="mistral-embed",
-                inputs=[sub["query"]],
+            embed_response = _mistral_with_retry(
+                lambda s=sub: client.embeddings.create(
+                    model="mistral-embed",
+                    inputs=[s["query"]],
+                )
             )
             query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
             result = retrieve(
@@ -271,7 +295,7 @@ async def query_stream(request: QueryRequest):
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*"},
             )
 
-        messages = build_generation_messages(q, merged["chunks"], answer_template)
+        messages = build_generation_messages(rewritten_q, merged["chunks"], answer_template, chat_history=request.chat_history)
 
         async def token_generator():
             try:
@@ -299,16 +323,29 @@ async def query_stream(request: QueryRequest):
                 import threading
                 threading.Thread(target=run_stream, daemon=True).start()
 
+                pending = ""
                 while True:
                     token = await queue.get()
                     if token is None:
+                        if pending:
+                            yield f"data: {pending}\n\n"
                         yield "data: [DONE]\n\n"
                         break
                     elif isinstance(token, str) and token.startswith("[ERROR]"):
+                        if pending:
+                            yield f"data: {pending}\n\n"
                         yield f"data: {token}\n\n"
                         break
                     else:
-                        yield f"data: {token}\n\n"
+                        pending += token
+                        # If we have an unclosed [ we might be mid-citation — keep buffering
+                        # but only if the open bracket is near the end (last 10 chars)
+                        # This prevents buffering entire sentences waiting for a [ that never closes
+                        open_pos = pending.rfind("[")
+                        if open_pos != -1 and "]" not in pending[open_pos:] and open_pos >= len(pending) - 10:
+                            continue
+                        yield f"data: {pending}\n\n"
+                        pending = ""
             except Exception as e:
                 yield f"data: [ERROR] {e}\n\n"
                 yield "data: [DONE]\n\n"

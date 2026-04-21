@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { queryRAGStream } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
@@ -8,12 +8,32 @@ import UploadPanel from "./components/UploadPanel";
 export default function App() {
   const [activeTab, setActiveTab] = useState("chat");
   const [messages, setMessages] = useState([]);
-  const [recentQueries, setRecentQueries] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Each session: { id, title, messages }
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
 
   function handleSubmit(query) {
     if (isLoading) return;
     setIsLoading(true);
+
+    // If no active session yet, create one with this query as title
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      sessionId = Date.now().toString();
+      setActiveSessionId(sessionId);
+      setSessions(prev => [{
+        id: sessionId,
+        title: query.length > 40 ? query.slice(0, 40) + "…" : query,
+        messages: []
+      }, ...prev].slice(0, 10));
+    }
+
+    const chatHistory = messages
+      .filter(m => m.role === "user" || (m.role === "assistant" && m.content && !m.streaming))
+      .map(m => ({ role: m.role, content: m.content }))
+      .slice(-6);
 
     setMessages((prev) => [
       ...prev,
@@ -21,13 +41,9 @@ export default function App() {
       { role: "assistant", content: "", response: null, streaming: true },
     ]);
 
-    setRecentQueries((prev) => {
-      const deduped = [query, ...prev.filter((q) => q !== query)];
-      return deduped.slice(0, 5);
-    });
-
     queryRAGStream(
       query,
+      chatHistory,
       (token) => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -49,6 +65,16 @@ export default function App() {
         });
         setIsLoading(false);
       },
+      (data) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            response: data,
+          };
+          return updated;
+        });
+      },
       (errMsg) => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -66,6 +92,21 @@ export default function App() {
 
   function handleNewChat() {
     setMessages([]);
+    setActiveSessionId(null);
+  }
+
+  useEffect(() => {
+    if (!activeSessionId || messages.length === 0) return;
+    setSessions(prev => prev.map(s =>
+      s.id === activeSessionId ? { ...s, messages } : s
+    ));
+  }, [messages, activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleSessionClick(session) {
+    if (session.id === activeSessionId) return;
+    setMessages(session.messages || []);
+    setActiveSessionId(session.id);
+    setActiveTab("chat");
   }
 
   return (
@@ -74,7 +115,9 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onNewChat={handleNewChat}
-        recentQueries={recentQueries}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSessionClick={handleSessionClick}
       />
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {activeTab === "upload" ? (
