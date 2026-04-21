@@ -273,40 +273,48 @@ async def query_stream(request: QueryRequest):
 
         messages = build_generation_messages(q, merged["chunks"], answer_template)
 
-        async def token_stream():
-            token_queue: asyncio.Queue = asyncio.Queue()
-            loop = asyncio.get_running_loop()
+        async def token_generator():
+            try:
+                def stream_tokens(messages, model):
+                    with client.chat.stream(
+                        model=model,
+                        messages=messages,
+                    ) as stream:
+                        for chunk in stream:
+                            content = chunk.data.choices[0].delta.content
+                            if content:
+                                yield content
 
-            def _sync_stream():
-                try:
-                    with client.chat.stream(model=GENERATION_MODEL, messages=messages) as stream:
-                        for text in stream.text_stream:
-                            asyncio.run_coroutine_threadsafe(
-                                token_queue.put(text), loop
-                            ).result()
-                except Exception as exc:
-                    asyncio.run_coroutine_threadsafe(
-                        token_queue.put(("__error__", str(exc))), loop
-                    ).result()
-                finally:
-                    asyncio.run_coroutine_threadsafe(
-                        token_queue.put(None), loop
-                    ).result()
+                loop = asyncio.get_event_loop()
+                queue = asyncio.Queue()
 
-            loop.run_in_executor(None, _sync_stream)
+                def run_stream():
+                    try:
+                        for token in stream_tokens(messages, GENERATION_MODEL):
+                            asyncio.run_coroutine_threadsafe(queue.put(token), loop)
+                        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+                    except Exception as e:
+                        asyncio.run_coroutine_threadsafe(queue.put(f"[ERROR] {e}"), loop)
 
-            while True:
-                item = await token_queue.get()
-                if item is None:
-                    yield "data: [DONE]\n\n"
-                    return
-                if isinstance(item, tuple) and item[0] == "__error__":
-                    yield f"data: [ERROR] {item[1]}\n\n"
-                    return
-                yield f"data: {item}\n\n"
+                import threading
+                threading.Thread(target=run_stream, daemon=True).start()
+
+                while True:
+                    token = await queue.get()
+                    if token is None:
+                        yield "data: [DONE]\n\n"
+                        break
+                    elif isinstance(token, str) and token.startswith("[ERROR]"):
+                        yield f"data: {token}\n\n"
+                        break
+                    else:
+                        yield f"data: {token}\n\n"
+            except Exception as e:
+                yield f"data: [ERROR] {e}\n\n"
+                yield "data: [DONE]\n\n"
 
         return StreamingResponse(
-            token_stream(),
+            token_generator(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*"},
         )
