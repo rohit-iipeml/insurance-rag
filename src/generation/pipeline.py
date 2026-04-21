@@ -118,6 +118,21 @@ def build_generation_prompt(
     return system_prompt, user_prompt
 
 
+def build_generation_messages(
+    query: str,
+    chunks: list[dict],
+    answer_template: str,
+) -> list[dict]:
+    """Returns the messages list for the generation call.
+    Used by the streaming endpoint so it can construct the prompt without
+    calling generate_answer (which blocks until the full response arrives)."""
+    system_prompt, user_prompt = build_generation_prompt(query, chunks, answer_template)
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": user_prompt},
+    ]
+
+
 def generate_answer(query: str, chunks: list[dict], answer_template: str) -> str:
     # Raw answer returned here — citation verification happens in a separate
     # step so the two concerns stay cleanly separated.
