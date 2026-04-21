@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { queryRAG } from "./api";
+import { queryRAGStream } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import WelcomeScreen from "./components/WelcomeScreen";
@@ -11,28 +11,57 @@ export default function App() {
   const [recentQueries, setRecentQueries] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(query) {
+  function handleSubmit(query) {
     if (isLoading) return;
     setIsLoading(true);
-    setMessages((prev) => [...prev, { role: "user", content: query, response: null }]);
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: query, response: null },
+      { role: "assistant", content: "", response: null, streaming: true },
+    ]);
+
     setRecentQueries((prev) => {
       const deduped = [query, ...prev.filter((q) => q !== query)];
       return deduped.slice(0, 5);
     });
-    try {
-      const data = await queryRAG(query);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: data.answer, response: data },
-      ]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "⚠️ " + err.message, response: null },
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
+
+    queryRAGStream(
+      query,
+      (token) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content: updated[updated.length - 1].content + token,
+          };
+          return updated;
+        });
+      },
+      () => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            streaming: false,
+          };
+          return updated;
+        });
+        setIsLoading(false);
+      },
+      (errMsg) => {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content: "⚠️ " + errMsg,
+            streaming: false,
+          };
+          return updated;
+        });
+        setIsLoading(false);
+      }
+    );
   }
 
   function handleNewChat() {

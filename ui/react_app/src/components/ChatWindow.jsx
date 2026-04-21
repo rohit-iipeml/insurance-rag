@@ -21,7 +21,7 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isLoading]);
+  }, [messages]);
 
   function handleKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey && inputValue.trim() && !isLoading) {
@@ -73,7 +73,7 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
           />
         ))}
 
-        {isLoading && (
+        {isLoading && messages[messages.length - 1]?.content === "" && (
           <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
             <div style={{ fontSize: 14, color: "var(--text-secondary)", paddingTop: 4 }}>
               <span style={dotStyle("0s")} />
