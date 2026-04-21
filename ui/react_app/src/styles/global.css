@@ -1,0 +1,31 @@
+:root {
+  --bg: #ffffff;
+  --sidebar-bg: #f7f7f5;
+  --border: #e8e8e4;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6b6b;
+  --user-bubble: #f0f0ec;
+  --accent: #1a1a1a;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+}
