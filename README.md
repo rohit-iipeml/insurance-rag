@@ -198,6 +198,20 @@ streamlit run ui/chat.py
 
 Open [http://localhost:8501](http://localhost:8501) in your browser.
 
+## Running the Frontend
+
+### Prerequisites
+- Node.js 18+
+
+### Setup
+```bash
+cd ui/react_app
+npm install
+npm run dev
+```
+
+The React app runs on http://localhost:5173 and expects the FastAPI backend running at http://localhost:8000. Start the backend first.
+
 ### API Endpoints
 
 | Endpoint | Method | Description |
