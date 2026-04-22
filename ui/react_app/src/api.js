@@ -43,6 +43,7 @@ export async function queryRAGStream(query, chatHistory, onToken, onDone, onSour
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let awaitingSources = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -65,13 +66,17 @@ export async function queryRAGStream(query, chatHistory, onToken, onDone, onSour
         .map((line) => line.startsWith("data: ") ? line.slice(6) : line.slice(5))
         .join("\n");
 
-      if (content.trim() === "[DONE]") {
-        onDone();
+      if (awaitingSources) {
         try {
-          const data = await queryRAG(query, chatHistory);
-          onSources(data);
-        } catch {}
+          const parsed = JSON.parse(content.slice("[SOURCES]".length));
+          onSources(parsed);
+        } catch {
+          onSources({ sources: [], citation_check: null });
+        }
         return;
+      } else if (content.trim() === "[DONE]") {
+        onDone();
+        awaitingSources = true;
       } else if (content.startsWith("[ERROR]")) {
         onError(content.slice(7));
         return;

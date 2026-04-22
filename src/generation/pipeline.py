@@ -32,6 +32,7 @@ Otherwise null.
 - sub_queries: if intent is retrieval, decompose the query into 2-4 targeted sub-queries. \
 Each sub-query should have 'query' (string) and 'doc_type' \
 (one of: base_policy, endorsement, amendment, declarations, or null if any doc type is acceptable). \
+- IMPORTANT: If the query mentions a specific state, jurisdiction, or location (e.g. Florida, Texas, California, NY), always include at least one sub-query with doc_type set to 'amendment' targeting that state's specific rules or modifications. \
 Otherwise empty list.
 - refusal_reason: if intent is pii_sensitive, legal_advice, or out_of_scope, provide a brief \
 user-facing refusal message. Otherwise null.
@@ -143,7 +144,8 @@ Rules:
 - If the question refers to "it", "this", "that", "the policy", "the same", etc., \
 replace with the specific subject from history
 - Never add information not present in the history or question
-- Return only the rewritten question, nothing else, no explanation"""
+- Return only the rewritten question, nothing else, no explanation
+- Preserve any specific identifiers from the history such as section numbers, endorsement codes, dollar amounts, and named policy forms verbatim in the rewritten question"""
 
 
 def rewrite_query_with_history(query: str, chat_history: list[dict]) -> str:
@@ -155,12 +157,12 @@ def rewrite_query_with_history(query: str, chat_history: list[dict]) -> str:
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
     try:
         history_text = "\n".join(
-            f"{m['role'].upper()}: {m['content'][:300]}"
+            f"{m['role'].upper()}: {m['content'][:800]}"
             for m in chat_history[-4:]  # last 2 exchanges only
         )
         response = _mistral_with_retry(
             lambda: client.chat.complete(
-                model=GENERATION_MODEL,
+                model="mistral-small-latest",
                 messages=[
                     {"role": "system", "content": _REWRITE_SYSTEM_PROMPT},
                     {"role": "user", "content": f"Conversation history:\n{history_text}\n\nFollow-up question: {query}\n\nRewritten standalone question:"},

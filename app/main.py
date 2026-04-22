@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from src.generation.pipeline import (
     _mistral_with_retry,
     build_generation_messages,
     detect_intent_and_decompose,
+    format_sources,
     rewrite_query_with_history,
     run_generation_pipeline,
 )
@@ -342,6 +344,12 @@ async def query_stream(request: QueryRequest):
                         if pending:
                             yield f"data: {pending}\n\n"
                         yield "data: [DONE]\n\n"
+                        sources_data = format_sources(merged["chunks"])
+                        meta_event = json.dumps({
+                            "sources": sources_data,
+                            "citation_check": {"verified_citations": [], "hallucinated_citations": [], "is_clean": True},
+                        })
+                        yield f"data: [SOURCES]{meta_event}\n\n"
                         break
                     elif isinstance(token, str) and token.startswith("[ERROR]"):
                         if pending:

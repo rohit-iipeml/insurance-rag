@@ -308,9 +308,6 @@ async def rerank_chunks(query: str, chunks: list[dict], api_key: str) -> list[di
         seen_ids = set(ranked_ids)
         reranked += [c for c in chunks if c["chunk_id"] not in seen_ids]
 
-        # print("[RERANK] original order:", [c["chunk_id"] for c in chunks])
-        # print("[RERANK] reranked order:", [c["chunk_id"] for c in reranked])
-
         return reranked
 
     except Exception:
