@@ -21,7 +21,7 @@ from src.generation.pipeline import (
     run_generation_pipeline,
 )
 from src.ingestion.pipeline import ingest_pdfs, load_bm25_index, load_vector_store
-from src.retrieval.pipeline import is_conversational, is_pii_query, merge_subquery_results, retrieve
+from src.retrieval.pipeline import is_conversational, is_pii_query, merge_subquery_results, rerank_chunks, retrieve
 
 load_dotenv()
 
@@ -187,6 +187,12 @@ async def query(request: QueryRequest) -> dict:
             subquery_results.append(result)
 
         merged     = merge_subquery_results(subquery_results)
+        if merged["sufficient_evidence"]:
+            merged["chunks"] = await rerank_chunks(
+                query   = rewritten_q,
+                chunks  = merged["chunks"],
+                api_key = os.environ["MISTRAL_API_KEY"],
+            )
         generation = run_generation_pipeline(
             query               = rewritten_q,
             chunks              = merged["chunks"],
@@ -283,6 +289,12 @@ async def query_stream(request: QueryRequest):
             subquery_results.append(result)
 
         merged = merge_subquery_results(subquery_results)
+        if merged["sufficient_evidence"]:
+            merged["chunks"] = await rerank_chunks(
+                query   = rewritten_q,
+                chunks  = merged["chunks"],
+                api_key = os.environ["MISTRAL_API_KEY"],
+            )
 
         if not merged["sufficient_evidence"]:
             from src.generation.pipeline import INSUFFICIENT_EVIDENCE_MSG

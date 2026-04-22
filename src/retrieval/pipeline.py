@@ -1,5 +1,7 @@
+import json
 import re
 
+import httpx
 import numpy as np
 
 from src.ingestion.pipeline import bm25_plus_score
@@ -248,3 +250,68 @@ def merge_subquery_results(subquery_results: list[dict]) -> dict:
         "sufficient_evidence": sufficient,
         "top_semantic_score": top_semantic,
     }
+
+
+async def rerank_chunks(query: str, chunks: list[dict], api_key: str) -> list[dict]:
+    if not chunks:
+        return chunks
+    try:
+        chunk_lines = []
+        for chunk in chunks:
+            text = chunk.get("metadata", {}).get("text", "")[:600]
+            chunk_lines.append(f"chunk_id: {chunk['chunk_id']}\n{text}")
+
+        chunks_text = "\n\n".join(chunk_lines)
+        prompt = (
+            f"You are a relevance ranker for insurance policy documents. "
+            f"Given a query and a list of document chunks, return a json object "
+            f"with a single key 'ranked_ids' containing an array of chunk_ids ordered "
+            f"from most to least relevant to the query. Include every chunk_id exactly once.\n\n"
+            f"Query: {query}\n\nChunks:\n{chunks_text}"
+        )
+
+        payload = {
+            "model": "mistral-small-latest",
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+
+        if isinstance(parsed, list):
+            ranked_ids = parsed
+        else:
+            ranked_ids = next(
+                (v for v in parsed.values() if isinstance(v, list)),
+                None,
+            )
+            if ranked_ids is None:
+                return chunks
+
+        if isinstance(ranked_ids, str):
+            ranked_ids = json.loads(ranked_ids)
+
+        id_to_chunk = {c["chunk_id"]: c for c in chunks}
+        reranked = [id_to_chunk[cid] for cid in ranked_ids if cid in id_to_chunk]
+        seen_ids = set(ranked_ids)
+        reranked += [c for c in chunks if c["chunk_id"] not in seen_ids]
+
+        # print("[RERANK] original order:", [c["chunk_id"] for c in chunks])
+        # print("[RERANK] reranked order:", [c["chunk_id"] for c in reranked])
+
+        return reranked
+
+    except Exception:
+        return chunks
