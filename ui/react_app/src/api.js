@@ -42,47 +42,68 @@ export async function queryRAGStream(query, chatHistory, onToken, onDone, onSour
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  let awaitingSources = false;
+  let eventData = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    const chunk = decoder.decode(value, { stream: true });
+    const lines = chunk.split("\n");
+    const tokensThisChunk = [];
 
-    // Split on double-newline (SSE event boundary)
-    const events = buffer.split("\n\n");
-    buffer = events.pop(); // keep any incomplete trailing event
+    for (const line of lines) {
+      if (line.startsWith("data:")) {
+        // Normalize: strip "data:" prefix, preserve one leading space if present
+        const lineContent = line.startsWith("data: ") ? line.slice(6) : line.slice(5);
+        eventData += (eventData ? "\n" : "") + lineContent;
+      } else if (line === "" && eventData !== "") {
+        const content = eventData;
+        eventData = "";
 
-    for (const event of events) {
-      if (!event.trim()) continue;
-      // Each event line is "data: <content>" — slice(6) removes exactly
-      // "data: " (6 chars) and preserves everything after, including any
-      // leading space that is part of the token itself.
-      const content = event
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.startsWith("data: ") ? line.slice(6) : line.slice(5))
-        .join("\n");
-
-      if (awaitingSources) {
-        try {
-          const parsed = JSON.parse(content.slice("[SOURCES]".length));
-          onSources(parsed);
-        } catch {
-          onSources({ sources: [], citation_check: null });
+        if (content.trim() === "[DONE]") {
+          if (tokensThisChunk.length > 0) {
+            onToken(tokensThisChunk.join(""));
+            tokensThisChunk.length = 0;
+          }
+          onDone();
+          // keep reading — [SOURCES] event follows
+          continue;
         }
-        return;
-      } else if (content.trim() === "[DONE]") {
-        onDone();
-        awaitingSources = true;
-      } else if (content.startsWith("[ERROR]")) {
-        onError(content.slice(7));
-        return;
-      } else if (content.trim()) {
-        onToken(content);
+
+        if (content.startsWith("[SOURCES]")) {
+          if (tokensThisChunk.length > 0) {
+            onToken(tokensThisChunk.join(""));
+          }
+          try {
+            const data = JSON.parse(content.slice("[SOURCES]".length));
+            onSources(data);
+          } catch {
+            onSources({ sources: [], citation_check: null });
+          }
+          return;
+        }
+
+        if (content.startsWith("[ERROR]")) {
+          if (tokensThisChunk.length > 0) {
+            onToken(tokensThisChunk.join(""));
+          }
+          onError(content.slice(7).trim());
+          return;
+        }
+
+        if (content) {
+          try {
+            tokensThisChunk.push(JSON.parse(content));
+          } catch {
+            tokensThisChunk.push(content);
+          }
+        }
       }
+    }
+
+    if (tokensThisChunk.length > 0) {
+      onToken(tokensThisChunk.join(""));
     }
   }
 }

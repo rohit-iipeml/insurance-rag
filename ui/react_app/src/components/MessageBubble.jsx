@@ -1,5 +1,23 @@
 import ReactMarkdown from "react-markdown";
 
+const VERDICT_STYLES = {
+  "COVERED: Yes": {
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #bbf7d0",
+  },
+  "COVERED: No": {
+    background: "#fee2e2",
+    color: "#b91c1c",
+    border: "1px solid #fecaca",
+  },
+  "COVERED: Conditional": {
+    background: "#fff7ed",
+    color: "#c2410c",
+    border: "1px solid #fed7aa",
+  },
+};
+
 export default function MessageBubble({ role, content, response }) {
   if (role === "user") {
     return (
@@ -22,13 +40,23 @@ export default function MessageBubble({ role, content, response }) {
     );
   }
 
-  const formattedContent = content
-    .replace(/^(COVERED: (?:Yes|No|Conditional))/m, "**$1**\n\n")
-    .replace(/^(BASE RULE|MODIFIER|NET EFFECT)/gm, "**$1**")
-    .replace(
-      /(\*\*COVERED: (?:Yes|No|Conditional)\*\*\n\n)([a-z])/,
-      (_, verdict, firstChar) => verdict + firstChar.toUpperCase()
-    );
+  // Extract verdict badge line if present
+  let verdictKey = null;
+  let bodyContent = content;
+  for (const key of Object.keys(VERDICT_STYLES)) {
+    if (content.startsWith(key)) {
+      verdictKey = key;
+      bodyContent = content.slice(key.length).replace(/^\n+/, "");
+      break;
+    }
+  }
+
+  const formattedContent = bodyContent
+    // Strip any existing asterisks around the section headers first
+    .replace(/\*{0,2}(BASE RULE|MODIFIER|NET EFFECT)\*{0,2}/g, "\n\n**$1**\n\n")
+    // Clean up excessive blank lines
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
   const sources = response?.sources;
   const hasSources = sources && sources.length > 0;
@@ -42,19 +70,37 @@ export default function MessageBubble({ role, content, response }) {
           color: "var(--text-primary)",
         }}
       >
+        {verdictKey && (
+          <div
+            style={{
+              display: "inline-block",
+              padding: "4px 12px",
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              border: VERDICT_STYLES[verdictKey].border,
+              background: VERDICT_STYLES[verdictKey].background,
+              color: VERDICT_STYLES[verdictKey].color,
+              marginBottom: 12,
+            }}
+          >
+            {verdictKey}
+          </div>
+        )}
         <div className="assistant-content">
           <ReactMarkdown>{formattedContent}</ReactMarkdown>
         </div>
         {hasSources && (
-          <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
             <div
               style={{
                 fontSize: 11,
-                fontWeight: 500,
+                fontWeight: 600,
+                letterSpacing: "0.08em",
                 color: "var(--text-secondary)",
+                marginBottom: 8,
+                marginTop: 16,
                 textTransform: "uppercase",
-                letterSpacing: "0.6px",
-                marginBottom: 6,
               }}
             >
               Sources
@@ -67,18 +113,24 @@ export default function MessageBubble({ role, content, response }) {
                 <div
                   key={i}
                   style={{
+                    background: "#f7f7f5",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    marginBottom: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                     fontSize: 12,
                     color: "var(--text-secondary)",
-                    padding: "2px 0",
-                    display: "flex",
-                    gap: 6,
                   }}
                 >
-                  <span style={{ fontWeight: 500, color: "var(--text-primary)", minWidth: 20 }}>
-                    [{i + 1}]
-                  </span>
+                  <span>📄</span>
                   <span>
-                    {src.source} · p.{src.page} · {section}
+                    <span style={{ fontWeight: 500, color: "var(--text-primary)" }}>
+                      {src.source}
+                    </span>
+                    {" · p."}{src.page}{" · "}{section}
                   </span>
                 </div>
               );

@@ -54,9 +54,21 @@ _TEMPLATE_INSTRUCTIONS: dict[str, str] = {
         "Then provide the surrounding policy context."
     ),
     "override_conflict": (
-        "Structure your answer in three labelled parts: "
-        "BASE RULE (from the base policy), MODIFIER (from the endorsement or amendment), "
-        "and NET EFFECT (the resulting rule as it applies to the insured)."
+        "Structure your answer in exactly three sections with each header on its own line.\n"
+        "Use this exact format — do not deviate:\n\n"
+        "BASE RULE\n"
+        "[your explanation of the base policy rule here]\n\n"
+        "MODIFIER\n"
+        "[your explanation of what the endorsement or amendment changes here]\n\n"
+        "NET EFFECT\n"
+        "[the resulting rule as it applies to the insured here]\n\n"
+        "Example of correct formatting:\n"
+        "BASE RULE\n"
+        "The base policy excludes flood damage under Section 4.2.\n\n"
+        "MODIFIER\n"
+        "Endorsement FL-01 adds flood coverage for an additional premium.\n\n"
+        "NET EFFECT\n"
+        "Flood damage is covered when FL-01 is attached to the policy."
     ),
     "definition": (
         "Quote the definition directly from the policy verbatim, then explain it in plain language."
@@ -287,6 +299,15 @@ def format_sources(chunks: list[dict]) -> list[dict]:
     return sources
 
 
+def normalize_override_answer(answer: str) -> str:
+    answer = re.sub(
+        r'\*{0,2}(BASE RULE|MODIFIER|NET EFFECT|(?<!\w)EFFECT(?!\w))\*{0,2}',
+        lambda m: f'\n\n{"NET EFFECT" if m.group(1) == "EFFECT" else m.group(1)}\n',
+        answer,
+    )
+    return re.sub(r'\n{3,}', '\n\n', answer).strip()
+
+
 def run_generation_pipeline(
     query: str,
     chunks: list[dict],
@@ -307,8 +328,12 @@ def run_generation_pipeline(
         }
 
     answer          = generate_answer(query, chunks, answer_template, chat_history)
+    if answer_template == "override_conflict":
+        answer = normalize_override_answer(answer)
     citation_check  = verify_citations(answer, chunks)
-    sources         = format_sources(chunks)
+    cited_indices   = {int(n) - 1 for n in citation_check["verified_citations"] if n.isdigit()}
+    cited_chunks    = [chunks[i] for i in sorted(cited_indices) if i < len(chunks)]
+    sources         = format_sources(cited_chunks if cited_chunks else chunks)
 
     return {
         "answer":             answer,

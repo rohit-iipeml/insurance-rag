@@ -57,10 +57,25 @@ export default function App() {
       () => {
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            streaming: false,
-          };
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") {
+            updated[updated.length - 1] = {
+              ...last,
+              streaming: false,
+              content: (() => {
+                  let t = last.content;
+                  // Pattern 1: **BASE RULE** (with or without asterisks)
+                  t = t.replace(/\*{0,2}BASE RULE\*{0,2}/g, "\n\n**BASE RULE**\n\n");
+                  // Pattern 2: MODIFIER** or **MODIFIER** or ODIFIER** (M sometimes dropped)
+                  t = t.replace(/M?ODIFIER\*{0,2}/g, "\n\n**MODIFIER**\n\n");
+                  // Pattern 3: EFFECT** or NET EFFECT** (NET sometimes dropped)
+                  t = t.replace(/(NET )?EFFECT\*{0,2}/g, "\n\n**NET EFFECT**\n\n");
+                  // Cleanup
+                  t = t.replace(/\n{3,}/g, "\n\n").trim();
+                  return t;
+                })(),
+            };
+          }
           return updated;
         });
         setIsLoading(false);
@@ -68,10 +83,24 @@ export default function App() {
       (data) => {
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            response: data,
-          };
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant" && data?.sources) {
+            const citedNums = new Set(
+              [...(last.content || "").matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1]) - 1)
+            );
+            const filteredSources = citedNums.size > 0
+              ? data.sources.filter((_, i) => citedNums.has(i))
+              : data.sources;
+            updated[updated.length - 1] = {
+              ...last,
+              response: { ...data, sources: filteredSources },
+            };
+          } else {
+            updated[updated.length - 1] = {
+              ...last,
+              response: data,
+            };
+          }
           return updated;
         });
       },

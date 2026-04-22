@@ -346,7 +346,7 @@ async def query_stream(request: QueryRequest):
                     token = await queue.get()
                     if token is None:
                         if pending:
-                            yield f"data: {pending}\n\n"
+                            yield f"data: {json.dumps(pending)}\n\n"
                         yield "data: [DONE]\n\n"
                         sources_data = format_sources(merged["chunks"])
                         meta_event = json.dumps({
@@ -357,18 +357,18 @@ async def query_stream(request: QueryRequest):
                         break
                     elif isinstance(token, str) and token.startswith("[ERROR]"):
                         if pending:
-                            yield f"data: {pending}\n\n"
+                            yield f"data: {json.dumps(pending)}\n\n"
                         yield f"data: {token}\n\n"
                         break
                     else:
                         pending += token
-                        # If we have an unclosed [ we might be mid-citation — keep buffering
-                        # but only if the open bracket is near the end (last 10 chars)
-                        # This prevents buffering entire sentences waiting for a [ that never closes
                         open_pos = pending.rfind("[")
-                        if open_pos != -1 and "]" not in pending[open_pos:] and open_pos >= len(pending) - 10:
+                        if open_pos != -1 and "]" not in pending[open_pos:]:
+                            if len(pending) - open_pos > 10:
+                                yield f"data: {json.dumps(pending)}\n\n"
+                                pending = ""
                             continue
-                        yield f"data: {pending}\n\n"
+                        yield f"data: {json.dumps(pending)}\n\n"
                         pending = ""
             except Exception as e:
                 yield f"data: [ERROR] {e}\n\n"

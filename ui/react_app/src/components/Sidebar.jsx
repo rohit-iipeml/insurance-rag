@@ -1,7 +1,7 @@
 export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, activeSessionId, onSessionClick }) {
   const navItems = [
     { id: "chat", label: "💬 Chat" },
-    { id: "upload", label: "📁 Upload Docs" },
+    { id: "upload", label: "📂 Upload Docs" },
   ];
 
   return (
@@ -68,14 +68,13 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               style={{
-                padding: isActive ? "8px 10px 8px 10px" : "8px 12px",
+                padding: "8px 10px",
                 borderRadius: 6,
                 fontSize: 13,
                 cursor: "pointer",
                 fontWeight: isActive ? 500 : 400,
                 color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-                borderLeft: isActive ? "2px solid var(--accent)" : "none",
-                paddingLeft: isActive ? 10 : 12,
+                background: isActive ? "#ebebea" : "transparent",
                 userSelect: "none",
               }}
             >
