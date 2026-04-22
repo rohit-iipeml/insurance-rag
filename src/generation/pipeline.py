@@ -34,6 +34,9 @@ Each sub-query should have 'query' (string) and 'doc_type' \
 (one of: base_policy, endorsement, amendment, declarations, or null if any doc type is acceptable). \
 - IMPORTANT: If the query mentions a specific state, jurisdiction, or location (e.g. Florida, Texas, California, NY), always include at least one sub-query with doc_type set to 'amendment' targeting that state's specific rules or modifications. \
 Otherwise empty list.
+- jurisdiction: if the query mentions a specific US state by name or abbreviation \
+(e.g. "Florida" → "FL", "Texas" → "TX", "New York" → "NY", "California" → "CA"), \
+return the two-letter state code. Otherwise null.
 - refusal_reason: if intent is pii_sensitive, legal_advice, or out_of_scope, provide a brief \
 user-facing refusal message. Otherwise null.
 

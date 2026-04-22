@@ -150,10 +150,11 @@ async def query(request: QueryRequest) -> dict:
         print(f"[REWRITE] {q!r} -> {rewritten_q!r}")
 
         analysis = detect_intent_and_decompose(rewritten_q)
-        intent          = analysis.get("intent", "retrieval")
-        sub_queries     = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
-        answer_template = analysis.get("answer_template", "general")
-        refusal_reason  = analysis.get("refusal_reason")
+        intent                 = analysis.get("intent", "retrieval")
+        sub_queries            = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
+        answer_template        = analysis.get("answer_template", "general")
+        refusal_reason         = analysis.get("refusal_reason")
+        effective_jurisdiction = request.jurisdiction or analysis.get("jurisdiction")
 
         if intent in _REFUSAL_INTENTS:
             return {
@@ -185,6 +186,7 @@ async def query(request: QueryRequest) -> dict:
                 metadata             = app.state.metadata,
                 bm25_index           = app.state.bm25_index,
                 doc_type_filter      = sub.get("doc_type"),
+                jurisdiction_filter  = effective_jurisdiction,
             )
             subquery_results.append(result)
 
@@ -253,11 +255,12 @@ async def query_stream(request: QueryRequest):
         rewritten_q = rewrite_query_with_history(q, request.chat_history or [])
         print(f"[REWRITE] {q!r} -> {rewritten_q!r}")
 
-        analysis       = detect_intent_and_decompose(rewritten_q)
-        intent         = analysis.get("intent", "retrieval")
-        sub_queries    = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
-        answer_template = analysis.get("answer_template", "general")
-        refusal_reason = analysis.get("refusal_reason")
+        analysis               = detect_intent_and_decompose(rewritten_q)
+        intent                 = analysis.get("intent", "retrieval")
+        sub_queries            = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
+        answer_template        = analysis.get("answer_template", "general")
+        refusal_reason         = analysis.get("refusal_reason")
+        effective_jurisdiction = request.jurisdiction or analysis.get("jurisdiction")
 
         if intent in _REFUSAL_INTENTS:
             async def _refusal():
@@ -287,6 +290,7 @@ async def query_stream(request: QueryRequest):
                 metadata             = app.state.metadata,
                 bm25_index           = app.state.bm25_index,
                 doc_type_filter      = sub.get("doc_type"),
+                jurisdiction_filter  = effective_jurisdiction,
             )
             subquery_results.append(result)
 

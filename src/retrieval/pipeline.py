@@ -62,6 +62,7 @@ def semantic_search(
     metadata: list[dict],
     top_k: int = TOP_K_PER_METHOD,
     doc_type_filter: str | None = None,
+    jurisdiction_filter: str | None = None,
 ) -> list[dict]:
     # Exact cosine search over all chunks — O(N) but fast at this scale.
     # At >100k chunks we would switch to approximate nearest neighbour (HNSW).
@@ -71,6 +72,10 @@ def semantic_search(
     for i, row in enumerate(embeddings_matrix):
         if doc_type_filter and metadata[i].get("doc_type") != doc_type_filter:
             continue
+        if jurisdiction_filter:
+            chunk_j = metadata[i].get("jurisdiction", "all")
+            if chunk_j != jurisdiction_filter and chunk_j != "all":
+                continue
         scores.append((i, cosine_similarity(query_embedding, row)))
 
     scores.sort(key=lambda x: x[1], reverse=True)
@@ -92,6 +97,7 @@ def keyword_search(
     metadata: list[dict],
     top_k: int = TOP_K_PER_METHOD,
     doc_type_filter: str | None = None,
+    jurisdiction_filter: str | None = None,
 ) -> list[dict]:
     # BM25+ excels at exact legal identifiers — 'Section 7.3', 'NX-END-02' —
     # that semantic search blurs because embeddings treat similar tokens as close.
@@ -100,6 +106,10 @@ def keyword_search(
     for chunk_index, score in raw:
         if doc_type_filter and metadata[chunk_index].get("doc_type") != doc_type_filter:
             continue
+        if jurisdiction_filter:
+            chunk_j = metadata[chunk_index].get("jurisdiction", "all")
+            if chunk_j != jurisdiction_filter and chunk_j != "all":
+                continue
         results.append({
             "chunk_index": chunk_index,
             "chunk_id":    metadata[chunk_index]["chunk_id"],
@@ -194,8 +204,8 @@ def check_sufficient_evidence(results: list[dict]) -> bool:
         if second_sem is not None:
             return second_sem >= SIMILARITY_THRESHOLD
 
-    # Only BM25 evidence available — exact match is considered sufficient.
-    return True
+    # Only BM25 evidence available — no semantic score to validate relevance.
+    return False
 
 
 def retrieve(
@@ -205,16 +215,19 @@ def retrieve(
     metadata: list[dict],
     bm25_index: dict,
     doc_type_filter: str | None = None,
+    jurisdiction_filter: str | None = None,
 ) -> dict:
     # Single sub-query retrieval — called once per decomposed sub-query.
     # Results from multiple sub-queries are merged upstream by the caller.
     semantic_results = semantic_search(
         query_embedding, embeddings_matrix, metadata,
         doc_type_filter=doc_type_filter,
+        jurisdiction_filter=jurisdiction_filter,
     )
     keyword_results = keyword_search(
         query_text, bm25_index, metadata,
         doc_type_filter=doc_type_filter,
+        jurisdiction_filter=jurisdiction_filter,
     )
     fused   = reciprocal_rank_fusion([semantic_results, keyword_results])
     capped  = apply_diversity_cap(fused)
