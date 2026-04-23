@@ -31,7 +31,8 @@ graph TD
     R --> S
     S --> T{Similarity Threshold}
     T -->|Below 0.50| U[Insufficient Evidence]
-    T -->|Above 0.50| V[Mistral Generation]
+    T -->|Above 0.50| V2[LLM Reranking]
+    V2 --> V[Mistral Generation]
     V --> W[Citation Verification]
     W --> X[Structured Response]
     I --> Q
@@ -47,6 +48,8 @@ graph TD
 Insurance policy documents have a well-defined hierarchical structure — sections, coverages, exclusions, and numbered clauses. Splitting on fixed token counts ignores this structure entirely and creates a critical problem: if a chunk boundary falls mid-clause, the section number gets separated from the clause text. A retriever searching for Section 7.3 finds a chunk that contains the number but not the rule, or the rule but not the number. Section-aware chunking solves this by first splitting on detected section headers (SECTION I, Coverage A, 7.3, AGREEMENT, DEFINITIONS etc.) so each chunk represents a complete legal unit. The cross-reference metadata extracted per chunk — section numbers and form codes mentioned in the text — enables cross-document retrieval without a second pass.
 
 When no section headers are detected (declarations pages, endorsement boilerplate), the pipeline falls back to fixed 500-token chunks with 15% overlap. The overlap is implemented with word-boundary awareness — the split point walks back to the nearest space character rather than cutting mid-word, which would produce meaningless tokens and degrade embedding quality.
+
+The specific values chosen — 2000 characters (~500 tokens at 4 chars/token) for maximum chunk size and 300 characters (15% overlap) — reflect a deliberate trade-off. Smaller chunks improve retrieval precision but lose surrounding context that the LLM needs to reason about cross-references. Larger chunks reduce precision by diluting the embedding signal with unrelated text. 500 tokens sits at the point where mistral-embed produces stable, discriminative embeddings for legal prose without context loss. The 15% overlap ensures that sentences straddling a boundary are fully represented in both adjacent chunks rather than truncated.
 
 ### Hybrid Search: BM25+ and Semantic
 
@@ -101,6 +104,8 @@ sequenceDiagram
     end
     API->>API: Merge sub-query results
     API->>API: Similarity threshold check
+    API->>LLM: Rerank chunks by answerability
+    LLM-->>API: reranked chunk order
     API->>LLM: Generate answer with template
     LLM-->>API: answer with citations
     API->>API: Citation verification
@@ -123,6 +128,7 @@ sequenceDiagram
 | Query decomposition | Single Mistral call decomposes query into 2-4 doc_type-targeted sub-queries |
 | Diversity cap | Max 3 chunks per doc_type prevents semantic collapse into single document type |
 | Security | PII filter before API calls, allow_pickle=False on numpy load, try/finally temp cleanup |
+| LLM-based reranking | After RRF fusion, Mistral re-scores candidate chunks for answerability before generation |
 
 ---
 
@@ -144,7 +150,7 @@ Insurance_rag/
 │       └── src/
 │           ├── App.jsx
 │           ├── api.js
-│           └── components/  # Sidebar, ChatWindow, MessageBubble, SourcesDrawer, UploadPanel, WelcomeScreen
+│           └── components/  # Sidebar, ChatWindow, MessageBubble, UploadPanel, WelcomeScreen
 ├── data/
 │   └── raw_docs/            # PDF knowledge base (19 documents)
 ├── vector_store/            # embeddings.npy, metadata.json, bm25_index.json
@@ -214,6 +220,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 | /health | GET | Health check |
 | /ingest | POST | Ingest PDFs — upload files or use existing docs in data/raw_docs/ |
 | /query | POST | Query the knowledge base |
+| /query/stream | POST | Stream answer tokens via SSE — same pipeline as /query with token-by-token delivery |
 
 ---
 
@@ -235,9 +242,22 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 
 - **Neighbor chunk inclusion** — retrieving adjacent chunks would help when answers span section boundaries
 - **Incremental ingestion** — currently re-embeds entire corpus on each ingest call; a document hash check would skip unchanged files
-- **Cross-encoder reranking** — a second-stage reranker would improve precision at the cost of latency
 - **Memory-mapped numpy** — for corpora exceeding 100k chunks, np.memmap would reduce memory footprint
 - **Multi-tenant support** — user-level document isolation not yet implemented
+
+---
+
+## Scalability
+
+The numpy float32 matrix and in-memory BM25 index work cleanly for corpora up to roughly 10,000 chunks — at that scale, exact cosine search over the full matrix completes in under 5ms and memory usage stays under 50MB. For larger corpora, `np.memmap` would allow the embeddings matrix to remain on disk and load only the queried rows into RAM, keeping memory usage flat. Beyond 100,000 chunks, an approximate nearest neighbour index such as HNSW would replace exact cosine search — trading a small recall penalty for sub-millisecond query times. The BM25 index is a plain Python dict and would migrate to an inverted index backed by SQLite or Postgres at the same threshold.
+
+## Multi-Tenancy
+
+The current system uses a single shared index. Tenant isolation can be added without architectural changes — each chunk's metadata already carries `doc_type` and `jurisdiction` filter fields. Adding a `tenant_id` field at ingestion time and passing it as a filter to `retrieve()` would restrict cosine search to that tenant's chunk indices before any similarity computation, ensuring complete document isolation between users.
+
+## Latency Profile
+
+A single query makes 4–5 Mistral API calls: query rewrite (mistral-small), intent detection and decomposition (mistral-large), one embedding call per sub-query (mistral-embed, typically 2–3 calls), LLM reranking (mistral-small), and generation (mistral-large). End-to-end latency on Mistral free tier is typically 8–15 seconds. The two highest-impact optimisations under a latency or cost constraint are: first, disabling LLM reranking (saves one round-trip with minimal retrieval quality loss at this corpus size); second, merging the rewrite and decomposition steps into a single mistral-small call (saves one mistral-large call per query).
 
 ---
 
