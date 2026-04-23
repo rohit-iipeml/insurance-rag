@@ -21,6 +21,7 @@ from src.generation.pipeline import (
     format_sources,
     rewrite_query_with_history,
     run_generation_pipeline,
+    verify_citations,
 )
 from src.ingestion.pipeline import ingest_pdfs, load_bm25_index, load_vector_store
 from src.retrieval.pipeline import is_conversational, is_pii_query, merge_subquery_results, rerank_chunks, retrieve
@@ -325,16 +326,21 @@ async def query_stream(request: QueryRequest):
                 threading.Thread(target=run_stream, daemon=True).start()
 
                 pending = ""
+                full_answer = ""
                 while True:
                     token = await queue.get()
                     if token is None:
                         if pending:
+                            full_answer += pending
                             yield f"data: {json.dumps(pending)}\n\n"
                         yield "data: [DONE]\n\n"
-                        sources_data = format_sources(merged["chunks"])
+                        citation_check = verify_citations(full_answer, merged["chunks"])
+                        cited_indices = {int(n) - 1 for n in citation_check["verified_citations"] if n.isdigit()}
+                        cited_chunks = [merged["chunks"][i] for i in sorted(cited_indices) if i < len(merged["chunks"])]
+                        sources_data = format_sources(cited_chunks if cited_chunks else merged["chunks"])
                         meta_event = json.dumps({
                             "sources": sources_data,
-                            "citation_check": {"verified_citations": [], "hallucinated_citations": [], "is_clean": True},
+                            "citation_check": citation_check,
                         })
                         yield f"data: [SOURCES]{meta_event}\n\n"
                         break
@@ -345,6 +351,7 @@ async def query_stream(request: QueryRequest):
                         break
                     else:
                         pending += token
+                        full_answer += token
                         open_pos = pending.rfind("[")
                         if open_pos != -1 and "]" not in pending[open_pos:]:
                             if len(pending) - open_pos > 10:
