@@ -74,8 +74,15 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
         ))}
 
         {isLoading && messages[messages.length - 1]?.content === "" && (
-          <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
-            <div style={{ fontSize: 14, color: "var(--text-secondary)", paddingTop: 4 }}>
+          <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16, paddingLeft: 2 }}>
+            <div style={{
+              background: "#f7f7f5",
+              borderRadius: "12px 12px 12px 4px",
+              padding: "10px 16px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 2,
+            }}>
               <span style={dotStyle("0s")} />
               <span style={dotStyle("0.4s")} />
               <span style={dotStyle("0.8s")} />

@@ -30,7 +30,7 @@ export default function MessageBubble({ role, content, response }) {
             maxWidth: "72%",
             fontSize: 14,
             lineHeight: 1.55,
-            color: "var(--text-primary)",
+            color: "#ffffff",
             whiteSpace: "pre-wrap",
           }}
         >
@@ -99,7 +99,7 @@ export default function MessageBubble({ role, content, response }) {
                 letterSpacing: "0.08em",
                 color: "var(--text-secondary)",
                 marginBottom: 8,
-                marginTop: 16,
+                marginTop: 8,
                 textTransform: "uppercase",
               }}
             >
@@ -113,11 +113,11 @@ export default function MessageBubble({ role, content, response }) {
                 <div
                   key={i}
                   style={{
-                    background: "#f7f7f5",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    padding: "8px 12px",
-                    marginBottom: 6,
+                    background: "#fafaf8",
+                    border: "1px solid #eeeeeb",
+                    borderRadius: 6,
+                    padding: "7px 12px",
+                    marginBottom: 4,
                     display: "flex",
                     alignItems: "center",
                     gap: 8,

@@ -42,7 +42,13 @@ def is_conversational(query: str) -> bool:
     normalised = query.lower().strip()
     if normalised in _CONVERSATIONAL_EXACT:
         return True
-    return any(normalised.startswith(prefix) for prefix in _CONVERSATIONAL_PREFIXES)
+    if any(normalised.startswith(prefix) for prefix in _CONVERSATIONAL_PREFIXES):
+        return True
+    # catch greetings with trailing words e.g. "hello how are you", "hi there"
+    greeting_starters = ("hello", "hi ", "hey ", "hi,", "hey,", "howdy")
+    if any(normalised.startswith(g) for g in greeting_starters):
+        return True
+    return False
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:

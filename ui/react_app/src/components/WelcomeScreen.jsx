@@ -48,7 +48,13 @@ export default function WelcomeScreen({ onSubmit }) {
           padding: "40px 40px 120px 40px",
         }}
       >
-        <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
+        <div style={{
+          width: 48, height: 48, borderRadius: 12, background: "var(--accent)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          marginBottom: 16, fontSize: 22,
+        }}>
+          📋
+        </div>
 
         <h1
           style={{
@@ -90,7 +96,7 @@ export default function WelcomeScreen({ onSubmit }) {
               style={{
                 background: "#ffffff",
                 border: "1px solid var(--border)",
-                borderLeft: "3px solid #e8e8e4",
+                borderLeft: "3px solid transparent",
                 borderRadius: 10,
                 padding: 14,
                 fontSize: 13,
@@ -100,14 +106,14 @@ export default function WelcomeScreen({ onSubmit }) {
                 cursor: "pointer",
                 width: "100%",
                 color: "var(--text-primary)",
-                transition: "border-color 0.15s",
+                transition: "all 0.15s",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "#c0c0ba";
+                e.currentTarget.style.background = "#f5f5f3";
                 e.currentTarget.style.borderLeftColor = "var(--accent)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--border)";
+                e.currentTarget.style.background = "#ffffff";
                 e.currentTarget.style.borderLeftColor = "#e8e8e4";
               }}
             >
@@ -125,7 +131,7 @@ export default function WelcomeScreen({ onSubmit }) {
           left: 0,
           right: 0,
           borderTop: "1px solid var(--border)",
-          background: "#ffffff",
+          background: "#fafaf9",
           padding: "16px 10%",
           display: "flex",
           gap: 8,

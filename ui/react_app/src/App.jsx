@@ -67,9 +67,9 @@ export default function App() {
                   // Pattern 1: **BASE RULE** (with or without asterisks)
                   t = t.replace(/\*{0,2}BASE RULE\*{0,2}/g, "\n\n**BASE RULE**\n\n");
                   // Pattern 2: MODIFIER** or **MODIFIER** or ODIFIER** (M sometimes dropped)
-                  t = t.replace(/M?ODIFIER\*{0,2}/g, "\n\n**MODIFIER**\n\n");
+                  t = t.replace(/\*{0,2}M?ODIFIER\*{0,2}/g, "\n\n**MODIFIER**\n\n");
                   // Pattern 3: EFFECT** or NET EFFECT** (NET sometimes dropped)
-                  t = t.replace(/(NET )?EFFECT\*{0,2}/g, "\n\n**NET EFFECT**\n\n");
+                  t = t.replace(/\*{0,2}(NET )?EFFECT\*{0,2}/g, "\n\n**NET EFFECT**\n\n");
                   // Cleanup
                   t = t.replace(/\n{3,}/g, "\n\n").trim();
                   return t;

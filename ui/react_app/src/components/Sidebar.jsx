@@ -11,7 +11,7 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
         minWidth: 240,
         height: "100%",
         background: "var(--sidebar-bg)",
-        borderRight: "1px solid var(--border)",
+        borderRight: "1px solid var(--border-sidebar)",
         display: "flex",
         flexDirection: "column",
         padding: "20px 16px",
@@ -22,19 +22,23 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
       {/* Brand */}
       <div
         style={{
-          fontSize: 18,
+          fontSize: 15,
           fontWeight: 600,
-          color: "var(--text-primary)",
+          color: "var(--text-sidebar)",
           marginBottom: 20,
         }}
       >
-        📋 Clairo
+        <span style={{
+          display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+          background: "var(--accent)", marginRight: 8, verticalAlign: "middle"
+        }}/>
+        <span style={{ verticalAlign: "middle" }}>Clairo</span>
       </div>
 
       {/* Divider */}
       <div
         style={{
-          borderTop: "1px solid var(--border)",
+          borderTop: "1px solid var(--border-sidebar)",
           marginBottom: 16,
         }}
       />
@@ -42,6 +46,8 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
       {/* New Chat button */}
       <button
         onClick={() => { onNewChat(); setActiveTab("chat"); }}
+        onMouseEnter={(e) => e.currentTarget.style.background = "var(--accent-hover)"}
+        onMouseLeave={(e) => e.currentTarget.style.background = "var(--accent)"}
         style={{
           width: "100%",
           background: "var(--accent)",
@@ -73,8 +79,8 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
                 fontSize: 13,
                 cursor: "pointer",
                 fontWeight: isActive ? 500 : 400,
-                color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-                background: isActive ? "#ebebea" : "transparent",
+                color: isActive ? "var(--text-sidebar)" : "var(--text-sidebar-secondary)",
+                background: isActive ? "#2c2c2e" : "transparent",
                 userSelect: "none",
               }}
             >
@@ -87,7 +93,7 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
       {/* Recent sessions */}
       {sessions.length > 0 && (
         <>
-          <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)",
+          <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-sidebar-secondary)",
                         letterSpacing: "0.6px", textTransform: "uppercase",
                         margin: "16px 0 8px" }}>
             Recent
@@ -96,16 +102,18 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
             <div
               key={session.id}
               onClick={() => onSessionClick(session)}
+              onMouseEnter={(e) => { if (session.id !== activeSessionId) e.currentTarget.style.background = "#252527"; }}
+              onMouseLeave={(e) => { if (session.id !== activeSessionId) e.currentTarget.style.background = "transparent"; }}
               style={{
                 fontSize: 13,
-                color: session.id === activeSessionId ? "var(--text-primary)" : "var(--text-secondary)",
+                color: session.id === activeSessionId ? "var(--text-sidebar)" : "var(--text-sidebar-secondary)",
                 padding: "6px 10px",
                 borderRadius: 6,
                 cursor: "pointer",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
-                background: session.id === activeSessionId ? "#eeeeeb" : "transparent",
+                background: session.id === activeSessionId ? "#2c2c2e" : "transparent",
               }}
             >
               {session.title}
@@ -119,8 +127,9 @@ export default function Sidebar({ activeTab, setActiveTab, onNewChat, sessions, 
         style={{
           marginTop: "auto",
           paddingTop: 16,
+          borderTop: "1px solid var(--border-sidebar)",
           fontSize: 11,
-          color: "#aaaaaa",
+          color: "var(--text-sidebar-secondary)",
           textAlign: "center",
         }}
       >
