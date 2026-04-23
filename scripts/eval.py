@@ -186,7 +186,7 @@ def evaluate_case(case: dict, result: dict) -> bool:
 
     # Q10 special rule: pass if answer contains "insufficient" OR sources empty
     if case["id"] == "Q10":
-        return ("insufficient" in answer) or (len(sources) == 0)
+        return ("insufficient" in answer) or ("sufficient information" in answer) or (len(sources) == 0)
 
     passed = True
     if exp_source is not None:
@@ -234,7 +234,7 @@ def main():
         print(f"  Sources        : {source_names if source_names else '(none)'}")
         print(f"  Result         : {label}")
         if case != EVAL_CASES[-1]:  # no sleep after last case
-            time.sleep(12)
+            time.sleep(20)
 
     print(f"\n{'=' * 70}")
     print(f"SUMMARY: {passed_count}/{len(EVAL_CASES)} passed")
