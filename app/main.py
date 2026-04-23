@@ -117,6 +117,44 @@ async def ingest(files: list[UploadFile] = File(default=[])) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _run_retrieval(
+    sub_queries: list[dict],
+    rewritten_q: str,
+    effective_jurisdiction: str | None,
+    app_state,
+) -> dict:
+    client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+    subquery_results: list[dict] = []
+
+    for sub in sub_queries:
+        embed_response = _mistral_with_retry(
+            lambda s=sub: client.embeddings.create(
+                model="mistral-embed",
+                inputs=[s["query"]],
+            )
+        )
+        query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
+        result = retrieve(
+            query_embedding      = query_embedding,
+            query_text           = sub["query"],
+            embeddings_matrix    = app_state.embeddings,
+            metadata             = app_state.metadata,
+            bm25_index           = app_state.bm25_index,
+            doc_type_filter      = sub.get("doc_type"),
+            jurisdiction_filter  = effective_jurisdiction,
+        )
+        subquery_results.append(result)
+
+    merged = merge_subquery_results(subquery_results)
+    if merged["sufficient_evidence"]:
+        merged["chunks"] = await rerank_chunks(
+            query   = rewritten_q,
+            chunks  = merged["chunks"],
+            api_key = os.environ["MISTRAL_API_KEY"],
+        )
+    return merged
+
+
 @app.post("/query")
 async def query(request: QueryRequest) -> dict:
     try:
@@ -168,35 +206,7 @@ async def query(request: QueryRequest) -> dict:
         # Embed and retrieve each sub-query independently — routing by doc_type
         # lets each sub-query target the document category most likely to hold
         # its answer, reducing noise in the merged context window.
-        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-        subquery_results: list[dict] = []
-
-        for sub in sub_queries:
-            embed_response = _mistral_with_retry(
-                lambda s=sub: client.embeddings.create(
-                    model="mistral-embed",
-                    inputs=[s["query"]],
-                )
-            )
-            query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
-            result = retrieve(
-                query_embedding      = query_embedding,
-                query_text           = sub["query"],
-                embeddings_matrix    = app.state.embeddings,
-                metadata             = app.state.metadata,
-                bm25_index           = app.state.bm25_index,
-                doc_type_filter      = sub.get("doc_type"),
-                jurisdiction_filter  = effective_jurisdiction,
-            )
-            subquery_results.append(result)
-
-        merged     = merge_subquery_results(subquery_results)
-        if merged["sufficient_evidence"]:
-            merged["chunks"] = await rerank_chunks(
-                query   = rewritten_q,
-                chunks  = merged["chunks"],
-                api_key = os.environ["MISTRAL_API_KEY"],
-            )
+        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state)
         generation = run_generation_pipeline(
             query               = rewritten_q,
             chunks              = merged["chunks"],
@@ -272,35 +282,7 @@ async def query_stream(request: QueryRequest):
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*"},
             )
 
-        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-        subquery_results: list[dict] = []
-
-        for sub in sub_queries:
-            embed_response = _mistral_with_retry(
-                lambda s=sub: client.embeddings.create(
-                    model="mistral-embed",
-                    inputs=[s["query"]],
-                )
-            )
-            query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
-            result = retrieve(
-                query_embedding      = query_embedding,
-                query_text           = sub["query"],
-                embeddings_matrix    = app.state.embeddings,
-                metadata             = app.state.metadata,
-                bm25_index           = app.state.bm25_index,
-                doc_type_filter      = sub.get("doc_type"),
-                jurisdiction_filter  = effective_jurisdiction,
-            )
-            subquery_results.append(result)
-
-        merged = merge_subquery_results(subquery_results)
-        if merged["sufficient_evidence"]:
-            merged["chunks"] = await rerank_chunks(
-                query   = rewritten_q,
-                chunks  = merged["chunks"],
-                api_key = os.environ["MISTRAL_API_KEY"],
-            )
+        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state)
 
         if not merged["sufficient_evidence"]:
             from src.generation.pipeline import INSUFFICIENT_EVIDENCE_MSG
