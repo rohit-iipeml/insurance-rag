@@ -283,6 +283,7 @@ async def query_stream(request: QueryRequest):
             )
 
         merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state)
+        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 
         if not merged["sufficient_evidence"]:
             from src.generation.pipeline import INSUFFICIENT_EVIDENCE_MSG
