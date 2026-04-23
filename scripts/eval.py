@@ -7,6 +7,7 @@ Requires: MISTRAL_API_KEY in environment or .env, vector store already built.
 import asyncio
 import os
 import sys
+import time
 from pathlib import Path
 
 # Allow imports from project root
@@ -232,6 +233,8 @@ def main():
         print(f"  Answer (120c)  : {answer_snippet}")
         print(f"  Sources        : {source_names if source_names else '(none)'}")
         print(f"  Result         : {label}")
+        if case != EVAL_CASES[-1]:  # no sleep after last case
+            time.sleep(12)
 
     print(f"\n{'=' * 70}")
     print(f"SUMMARY: {passed_count}/{len(EVAL_CASES)} passed")
