@@ -200,6 +200,12 @@ def save_to_vector_store(chunks: list[dict], store_dir: Path) -> None:
     """Vectors live in a numpy file for fast vectorised cosine ops; metadata
     stays in JSON so humans can inspect it and the retriever can filter
     without loading the full float matrix."""
+    if not chunks:
+        raise ValueError(
+            "No chunks were successfully embedded — nothing to save. "
+            "Check your MISTRAL_API_KEY and retry."
+        )
+
     store_dir.mkdir(parents=True, exist_ok=True)
 
     embeddings = np.array([c["embedding"] for c in chunks], dtype=np.float32)
@@ -322,6 +328,9 @@ def ingest_pdfs(pdf_paths: list[Path], store_dir: Path) -> dict:
         all_chunks.extend(chunks)
 
     embedded = embed_chunks(all_chunks)
+    dropped = len(all_chunks) - len(embedded)
+    if dropped > 0:
+        print(f"[WARN] {dropped} chunks failed embedding and were excluded from the index.")
     save_to_vector_store(embedded, store_dir)
 
     bm25_index = build_bm25_plus_index(embedded)
@@ -330,6 +339,7 @@ def ingest_pdfs(pdf_paths: list[Path], store_dir: Path) -> dict:
     return {
         "total_pdfs":        len(pdf_paths),
         "total_chunks":      len(embedded),
+        "chunks_dropped":    dropped,
         "store_dir":         str(store_dir),
         "bm25_unique_terms": len(bm25_index["doc_freqs"]),
     }
