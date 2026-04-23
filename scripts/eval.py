@@ -4,6 +4,7 @@ Usage: python scripts/eval.py
 Requires: MISTRAL_API_KEY in environment or .env, vector store already built.
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ from src.retrieval.pipeline import (
     is_conversational,
     is_pii_query,
     merge_subquery_results,
+    rerank_chunks,
     retrieve,
 )
 from src.generation.pipeline import detect_intent_and_decompose, run_generation_pipeline
@@ -49,6 +51,7 @@ EVAL_CASES = [
         "expected_intent": "retrieval",
         "expected_source_contains": "amendment_FL",
         "expected_answer_contains": None,
+        "jurisdiction": "FL",
     },
     {
         "id": "Q4",
@@ -56,6 +59,7 @@ EVAL_CASES = [
         "expected_intent": "retrieval",
         "expected_source_contains": "amendment_CA",
         "expected_answer_contains": "20",
+        "jurisdiction": "CA",
     },
     {
         "id": "Q5",
@@ -144,10 +148,17 @@ def run_case(case: dict, embeddings: np.ndarray, metadata: list, bm25_index: dic
             metadata=metadata,
             bm25_index=bm25_index,
             doc_type_filter=sub.get("doc_type"),
+            jurisdiction_filter=case.get("jurisdiction"),
         )
         subquery_results.append(result)
 
     merged = merge_subquery_results(subquery_results)
+    if merged["sufficient_evidence"]:
+        merged["chunks"] = asyncio.run(rerank_chunks(
+            query=q,
+            chunks=merged["chunks"],
+            api_key=os.environ["MISTRAL_API_KEY"],
+        ))
     generation = run_generation_pipeline(
         query=q,
         chunks=merged["chunks"],
