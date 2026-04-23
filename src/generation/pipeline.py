@@ -243,9 +243,11 @@ def generate_answer(query: str, chunks: list[dict], answer_template: str, chat_h
     # step so the two concerns stay cleanly separated.
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
     messages = build_generation_messages(query, chunks, answer_template, chat_history)
-    response = client.chat.complete(
-        model=GENERATION_MODEL,
-        messages=messages,
+    response = _mistral_with_retry(
+        lambda: client.chat.complete(
+            model=GENERATION_MODEL,
+            messages=messages,
+        )
     )
     return response.choices[0].message.content
 

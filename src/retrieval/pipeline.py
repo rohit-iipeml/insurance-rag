@@ -282,7 +282,7 @@ def merge_subquery_results(subquery_results: list[dict]) -> dict:
 
     merged_sorted = sorted(seen.values(), key=lambda x: x["fused_score"], reverse=True)
     capped        = apply_diversity_cap(merged_sorted)
-    sufficient    = any(r["sufficient_evidence"] for r in subquery_results)
+    sufficient    = check_sufficient_evidence(capped)
     top_semantic  = capped[0].get("semantic_score") if capped else None
 
     return {
