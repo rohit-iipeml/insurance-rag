@@ -309,7 +309,7 @@ async def query_stream(request: QueryRequest):
                             if content:
                                 yield content
 
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 queue = asyncio.Queue()
 
                 def run_stream():
