@@ -74,26 +74,47 @@ def semantic_search(
     # At >100k chunks we would switch to approximate nearest neighbour (HNSW).
     # doc_type_filter lets sub-queries target specific document categories,
     # which is critical for cross-document reasoning in insurance.
-    scores: list[tuple[int, float]] = []
-    for i, row in enumerate(embeddings_matrix):
-        if doc_type_filter and metadata[i].get("doc_type") != doc_type_filter:
+    # Build list of valid indices respecting doc_type and jurisdiction filters.
+    # Filtering before matrix ops keeps the submatrix small and the logic identical
+    # to the original — only the cosine computation is vectorized.
+    valid_indices: list[int] = []
+    for i, meta in enumerate(metadata):
+        if doc_type_filter and meta.get("doc_type") != doc_type_filter:
             continue
         if jurisdiction_filter:
-            chunk_j = metadata[i].get("jurisdiction", "all")
+            chunk_j = meta.get("jurisdiction", "all")
             if chunk_j != jurisdiction_filter and chunk_j != "all":
                 continue
-        scores.append((i, cosine_similarity(query_embedding, row)))
+        valid_indices.append(i)
 
-    scores.sort(key=lambda x: x[1], reverse=True)
+    if not valid_indices:
+        return []
+
+    # Vectorized cosine similarity over filtered submatrix.
+    # Equivalent to calling cosine_similarity(query_embedding, row) for each row
+    # but uses a single matrix multiply instead of a Python loop.
+    sub_matrix = embeddings_matrix[valid_indices]          # shape (M, D)
+    query_norm = np.linalg.norm(query_embedding)
+    if query_norm == 0.0:
+        return []
+    q = query_embedding / query_norm                       # unit vector
+    row_norms = np.linalg.norm(sub_matrix, axis=1)        # shape (M,)
+    # avoid division by zero for any zero-norm rows
+    safe_norms = np.where(row_norms == 0.0, 1.0, row_norms)
+    scores_arr = (sub_matrix / safe_norms[:, np.newaxis]) @ q  # shape (M,)
+
+    top_k_capped = min(top_k, len(valid_indices))
+    top_local = np.argsort(scores_arr)[::-1][:top_k_capped]
+
     return [
         {
-            "chunk_index": i,
-            "chunk_id":    metadata[i]["chunk_id"],
-            "score":       score,
+            "chunk_index": valid_indices[li],
+            "chunk_id":    metadata[valid_indices[li]]["chunk_id"],
+            "score":       float(scores_arr[li]),
             "method":      "semantic",
-            "metadata":    metadata[i],
+            "metadata":    metadata[valid_indices[li]],
         }
-        for i, score in scores[:top_k]
+        for li in top_local
     ]
 
 
