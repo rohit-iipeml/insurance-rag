@@ -1,5 +1,26 @@
 const BASE_URL = "http://localhost:8000";
 
+export async function sessionIngest(files, sessionId) {
+  const formData = new FormData();
+  formData.append("session_id", sessionId);
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  const res = await fetch(`${BASE_URL}/session/ingest`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const json = await res.json();
+      detail = json.detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 export async function ingestFiles(files) {
   const formData = new FormData();
   for (const file of files) {
@@ -17,13 +38,13 @@ export async function ingestFiles(files) {
   return res.json();
 }
 
-export async function queryRAGStream(query, chatHistory, onToken, onDone, onSources, onError) {
+export async function queryRAGStream(query, chatHistory, sessionId, onToken, onDone, onSources, onError) {
   let res;
   try {
     res = await fetch(`${BASE_URL}/query/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, chat_history: chatHistory || [] }),
+      body: JSON.stringify({ query, chat_history: chatHistory || [], session_id: sessionId || null }),
     });
   } catch (err) {
     onError(err.message);

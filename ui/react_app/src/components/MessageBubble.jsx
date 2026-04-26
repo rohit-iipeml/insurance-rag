@@ -18,7 +18,7 @@ const VERDICT_STYLES = {
   },
 };
 
-export default function MessageBubble({ role, content, response }) {
+export default function MessageBubble({ role, content, response, onSourceClick }) {
   if (role === "user") {
     return (
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
@@ -112,6 +112,7 @@ export default function MessageBubble({ role, content, response }) {
               return (
                 <div
                   key={i}
+                  onClick={() => onSourceClick && onSourceClick(src)}
                   style={{
                     background: "#fafaf8",
                     border: "1px solid #eeeeeb",
@@ -123,7 +124,11 @@ export default function MessageBubble({ role, content, response }) {
                     gap: 8,
                     fontSize: 12,
                     color: "var(--text-secondary)",
+                    cursor: onSourceClick ? "pointer" : "default",
+                    transition: "background 0.12s",
                   }}
+                  onMouseEnter={(e) => { if (onSourceClick) e.currentTarget.style.background = "#f0f0ee"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "#fafaf8"; }}
                 >
                   <span>📄</span>
                   <span>

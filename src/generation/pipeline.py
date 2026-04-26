@@ -277,26 +277,22 @@ def verify_citations(answer: str, retrieved_chunks: list[dict]) -> dict:
 
 def format_sources(chunks: list[dict]) -> list[dict]:
     seen_chunk_ids: set[str] = set()
-    seen_sources: set[str] = set()
     sources: list[dict] = []
     for chunk in chunks:
         meta = chunk.get("metadata", chunk)
         cid = meta.get("chunk_id", "unknown")
-        source = meta.get("source", "unknown")
         if cid in seen_chunk_ids:
             continue
         seen_chunk_ids.add(cid)
-        # Also deduplicate by source filename — same file appearing
-        # twice with different chunk_ids adds noise without value
-        if source in seen_sources:
-            continue
-        seen_sources.add(source)
+        chunk_text = meta.get("text", "")
         sources.append({
-            "chunk_id": cid,
-            "source":   source,
-            "page":     meta.get("page_start",    0),
-            "section":  meta.get("section_title", "unknown"),
-            "doc_type": meta.get("doc_type",      "unknown"),
+            "chunk_id":   cid,
+            "source":     meta.get("source",        "unknown"),
+            "page":       meta.get("page_start",    0),
+            "section":    meta.get("section_title", "unknown"),
+            "doc_type":   meta.get("doc_type",      "unknown"),
+            "is_session": meta.get("is_session",    False),
+            "chunk_text": chunk_text[:150] if chunk_text else "",
         })
     return sources
 

@@ -1,30 +1,43 @@
 import { useState, useEffect } from "react";
-import { queryRAGStream } from "./api";
+import { queryRAGStream, sessionIngest } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import WelcomeScreen from "./components/WelcomeScreen";
 import UploadPanel from "./components/UploadPanel";
+import PDFViewer from "./components/PDFViewer";
 
 export default function App() {
+  const [sessionId] = useState(() => crypto.randomUUID());
   const [activeTab, setActiveTab] = useState("chat");
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [viewerSource, setViewerSource] = useState(null);
 
   // Each session: { id, title, messages }
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
 
-  function handleSubmit(query) {
+  async function handleSubmit(query, filesToIngest = []) {
     if (isLoading) return;
     setIsLoading(true);
 
+    if (filesToIngest.length > 0) {
+      try {
+        await sessionIngest(filesToIngest, sessionId);
+      } catch (err) {
+        setIsLoading(false);
+        return;
+      }
+    }
+
     // If no active session yet, create one with this query as title
-    let sessionId = activeSessionId;
-    if (!sessionId) {
-      sessionId = Date.now().toString();
-      setActiveSessionId(sessionId);
+    let chatSid = activeSessionId;
+    if (!chatSid) {
+      chatSid = Date.now().toString();
+      setActiveSessionId(chatSid);
       setSessions(prev => [{
-        id: sessionId,
+        id: chatSid,
         title: query.length > 40 ? query.slice(0, 40) + "…" : query,
         messages: []
       }, ...prev].slice(0, 10));
@@ -44,6 +57,7 @@ export default function App() {
     queryRAGStream(
       query,
       chatHistory,
+      sessionId,
       (token) => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -84,23 +98,10 @@ export default function App() {
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
-          if (last?.role === "assistant" && data?.sources) {
-            const citedNums = new Set(
-              [...(last.content || "").matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1]) - 1)
-            );
-            const filteredSources = citedNums.size > 0
-              ? data.sources.filter((_, i) => citedNums.has(i))
-              : data.sources;
-            updated[updated.length - 1] = {
-              ...last,
-              response: { ...data, sources: filteredSources },
-            };
-          } else {
-            updated[updated.length - 1] = {
-              ...last,
-              response: data,
-            };
-          }
+          updated[updated.length - 1] = {
+            ...last,
+            response: data,
+          };
           return updated;
         });
       },
@@ -117,6 +118,17 @@ export default function App() {
         setIsLoading(false);
       }
     );
+  }
+
+  function handleSourceClick(src) {
+    setViewerSource({
+      filename:  src.source,
+      sessionId: sessionId,
+      page:      src.page,
+      section:   src.section,
+      chunkText: src.chunk_text || "",
+      isSession: src.is_session || false,
+    });
   }
 
   function handleNewChat() {
@@ -152,11 +164,39 @@ export default function App() {
         {activeTab === "upload" ? (
           <UploadPanel />
         ) : messages.length === 0 ? (
-          <WelcomeScreen onSubmit={handleSubmit} />
+          <WelcomeScreen
+            onSubmit={handleSubmit}
+            pendingFiles={pendingFiles}
+            setPendingFiles={setPendingFiles}
+          />
         ) : (
-          <ChatWindow messages={messages} isLoading={isLoading} onSubmit={handleSubmit} />
+          <ChatWindow
+            messages={messages}
+            isLoading={isLoading}
+            onSubmit={handleSubmit}
+            pendingFiles={pendingFiles}
+            setPendingFiles={setPendingFiles}
+            onSourceClick={handleSourceClick}
+          />
         )}
       </div>
+      {viewerSource && (
+        <>
+          <div
+            onClick={() => setViewerSource(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.25)",
+              zIndex: 999,
+            }}
+          />
+          <PDFViewer
+            source={viewerSource}
+            onClose={() => setViewerSource(null)}
+          />
+        </>
+      )}
     </div>
   );
 }

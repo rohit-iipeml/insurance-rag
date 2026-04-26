@@ -2,14 +2,15 @@ import asyncio
 import json
 import os
 import shutil
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from mistralai import Mistral
 from pydantic import BaseModel
 
@@ -23,24 +24,79 @@ from src.generation.pipeline import (
     run_generation_pipeline,
     verify_citations,
 )
-from src.ingestion.pipeline import ingest_pdfs, load_bm25_index, load_vector_store
+from src.ingestion.pipeline import (
+    ingest_pdfs,
+    load_bm25_index,
+    load_vector_store,
+    extract_text_from_pdf,
+    chunk_document,
+    embed_chunks,
+    build_bm25_plus_index,
+)
 from src.retrieval.pipeline import is_conversational, is_pii_query, merge_subquery_results, rerank_chunks, retrieve
 
 load_dotenv()
 
-VECTOR_STORE_DIR = Path("vector_store")
-DOCS_DIR         = Path("data/raw_docs")
-TEMP_DIR         = Path("temp")
+VECTOR_STORE_DIR  = Path("vector_store")
+DOCS_DIR          = Path("data/raw_docs")
+TEMP_DIR          = Path("temp")
+SESSION_DOCS_DIR  = Path("data/session_docs")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB in bytes
 
 _REFUSAL_INTENTS = {"pii_sensitive", "legal_advice", "out_of_scope"}
 
 
+class SessionManager:
+    def __init__(self):
+        self.active_sessions: dict = {}
+
+    def get_session(self, session_id: str) -> dict | None:
+        session = self.active_sessions.get(session_id)
+        if session:
+            session["last_active"] = time.time()
+        return session
+
+    def create_or_update(
+        self,
+        session_id: str,
+        embeddings: np.ndarray,
+        metadata: list,
+        bm25_index: dict,
+        files: dict,
+    ) -> None:
+        if session_id not in self.active_sessions:
+            self.active_sessions[session_id] = {
+                "embeddings":  embeddings,
+                "metadata":    metadata,
+                "bm25_index":  bm25_index,
+                "files":       files,
+                "last_active": time.time(),
+            }
+        else:
+            existing = self.active_sessions[session_id]
+            existing["embeddings"] = np.vstack([existing["embeddings"], embeddings])
+            existing["metadata"].extend(metadata)
+            existing["bm25_index"] = build_bm25_plus_index(existing["metadata"])
+            existing["files"].update(files)
+            existing["last_active"] = time.time()
+
+    def cleanup(self, max_age_seconds: int = 7200) -> None:
+        now = time.time()
+        to_delete = [
+            sid for sid, data in self.active_sessions.items()
+            if now - data["last_active"] > max_age_seconds
+        ]
+        for sid in to_delete:
+            shutil.rmtree(SESSION_DOCS_DIR / sid, ignore_errors=True)
+            del self.active_sessions[sid]
+
+
 class QueryRequest(BaseModel):
     query: str
     jurisdiction: str | None = None  # optional state filter e.g. 'CA', 'TX'
     chat_history: list[dict] | None = None
+    session_id: str | None = None
 
 
 @asynccontextmanager
@@ -54,8 +110,17 @@ async def lifespan(app: FastAPI):
         app.state.index_loaded = True
     else:
         app.state.index_loaded = False
+
+    app.state.session_manager = SessionManager()
+
+    async def _cleanup_loop():
+        while True:
+            await asyncio.sleep(3600)
+            app.state.session_manager.cleanup()
+
+    cleanup_task = asyncio.create_task(_cleanup_loop())
     yield
-    # Nothing to clean up — numpy arrays are garbage collected automatically
+    cleanup_task.cancel()
 
 
 app = FastAPI(
@@ -123,6 +188,7 @@ async def _run_retrieval(
     rewritten_q: str,
     effective_jurisdiction: str | None,
     app_state,
+    session_data: dict | None = None,
 ) -> dict:
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
     subquery_results: list[dict] = []
@@ -135,16 +201,29 @@ async def _run_retrieval(
             )
         )
         query_embedding = np.array(embed_response.data[0].embedding, dtype=np.float32)
-        result = retrieve(
-            query_embedding      = query_embedding,
-            query_text           = sub["query"],
-            embeddings_matrix    = app_state.embeddings,
-            metadata             = app_state.metadata,
-            bm25_index           = app_state.bm25_index,
-            doc_type_filter      = sub.get("doc_type"),
-            jurisdiction_filter  = effective_jurisdiction,
+
+        global_result = retrieve(
+            query_embedding     = query_embedding,
+            query_text          = sub["query"],
+            embeddings_matrix   = app_state.embeddings,
+            metadata            = app_state.metadata,
+            bm25_index          = app_state.bm25_index,
+            doc_type_filter     = sub.get("doc_type"),
+            jurisdiction_filter = effective_jurisdiction,
         )
-        subquery_results.append(result)
+        subquery_results.append(global_result)
+
+        if session_data and len(session_data.get("metadata", [])) > 0:
+            session_result = retrieve(
+                query_embedding     = query_embedding,
+                query_text          = sub["query"],
+                embeddings_matrix   = session_data["embeddings"],
+                metadata            = session_data["metadata"],
+                bm25_index          = session_data["bm25_index"],
+                doc_type_filter     = None,
+                jurisdiction_filter = None,
+            )
+            subquery_results.append(session_result)
 
     merged = merge_subquery_results(subquery_results)
     if merged["sufficient_evidence"]:
@@ -207,7 +286,11 @@ async def query(request: QueryRequest) -> dict:
         # Embed and retrieve each sub-query independently — routing by doc_type
         # lets each sub-query target the document category most likely to hold
         # its answer, reducing noise in the merged context window.
-        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state)
+        session_data = None
+        if request.session_id:
+            session_data = app.state.session_manager.get_session(request.session_id)
+
+        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state, session_data)
         generation = run_generation_pipeline(
             query               = rewritten_q,
             chunks              = merged["chunks"],
@@ -283,7 +366,11 @@ async def query_stream(request: QueryRequest):
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*"},
             )
 
-        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state)
+        session_data = None
+        if request.session_id:
+            session_data = app.state.session_manager.get_session(request.session_id)
+
+        merged = await _run_retrieval(sub_queries, rewritten_q, effective_jurisdiction, app.state, session_data)
         client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
 
         if not merged["sufficient_evidence"]:
@@ -394,6 +481,98 @@ def _save_uploads(files: list[UploadFile]) -> list[Path]:
         saved.append(dest)
 
     return saved
+
+
+@app.post("/session/ingest")
+async def session_ingest(
+    session_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> dict:
+    try:
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided.")
+
+        session_dir = SESSION_DOCS_DIR / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        saved_paths: list[Path] = []
+        saved_files: dict = {}
+
+        for upload in files:
+            if not (upload.filename or "").lower().endswith(".pdf"):
+                raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+            content = await upload.read()
+            if len(content) > MAX_FILE_SIZE:
+                raise HTTPException(status_code=400, detail="File exceeds 50MB limit.")
+            safe_name = Path(upload.filename).name
+            dest = session_dir / safe_name
+            dest.write_bytes(content)
+            saved_paths.append(dest)
+            saved_files[safe_name] = str(dest)
+
+        all_chunks: list[dict] = []
+        for pdf_path in saved_paths:
+            pages  = extract_text_from_pdf(pdf_path)
+            chunks = chunk_document(pages, pdf_path.name)
+            all_chunks.extend(chunks)
+
+        if not all_chunks:
+            raise HTTPException(status_code=400, detail="No text could be extracted from the uploaded PDFs.")
+
+        embedded = embed_chunks(all_chunks)
+        if not embedded:
+            raise HTTPException(status_code=500, detail="Embedding failed for all chunks.")
+
+        embeddings_array = np.array([c["embedding"] for c in embedded], dtype=np.float32)
+        metadata_list    = [{**{k: v for k, v in c.items() if k != "embedding"}, "is_session": True} for c in embedded]
+        bm25_index       = build_bm25_plus_index(embedded)
+
+        app.state.session_manager.create_or_update(
+            session_id = session_id,
+            embeddings = embeddings_array,
+            metadata   = metadata_list,
+            bm25_index = bm25_index,
+            files      = saved_files,
+        )
+
+        return {
+            "status":       "success",
+            "session_id":   session_id,
+            "total_pdfs":   len(saved_paths),
+            "total_chunks": len(embedded),
+            "message":      f"Ingested {len(saved_paths)} PDF(s) into {len(embedded)} session chunks.",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pdf/global/{filename}")
+async def get_global_pdf(filename: str):
+    safe_name = Path(filename).name
+    file_path = DOCS_DIR / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(
+        str(file_path),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={safe_name}"},
+    )
+
+
+@app.get("/pdf/{session_id}/{filename}")
+async def get_session_pdf(session_id: str, filename: str):
+    safe_name = Path(filename).name
+    file_path = SESSION_DOCS_DIR / session_id / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(
+        str(file_path),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={safe_name}"},
+    )
 
 
 if __name__ == "__main__":

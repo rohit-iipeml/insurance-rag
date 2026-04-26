@@ -12,9 +12,10 @@ const dotStyle = (delay) => ({
   animationDelay: delay,
 });
 
-export default function ChatWindow({ messages, isLoading, onSubmit }) {
+export default function ChatWindow({ messages, isLoading, onSubmit, pendingFiles, setPendingFiles, onSourceClick }) {
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [inputValue, setInputValue] = useState("");
 
   useEffect(() => {
@@ -40,7 +41,9 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
   function submit() {
     const val = inputValue.trim();
     if (!val) return;
-    onSubmit(val);
+    const filesToSend = [...pendingFiles];
+    setPendingFiles([]);
+    onSubmit(val, filesToSend);
     setInputValue("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -70,6 +73,7 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
             role={msg.role}
             content={msg.content}
             response={msg.response}
+            onSourceClick={onSourceClick}
           />
         ))}
 
@@ -97,10 +101,68 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
           background: "#ffffff",
           padding: "16px 10%",
           display: "flex",
+          flexDirection: "column",
           gap: 8,
-          alignItems: "flex-end",
         }}
       >
+        {pendingFiles.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {pendingFiles.map((f) => (
+              <div
+                key={f.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  background: "#f0f0ee",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                  fontSize: 12,
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span>📄</span>
+                <span>{f.name}</span>
+                <button
+                  onClick={() => setPendingFiles((prev) => prev.filter((x) => x.name !== f.name))}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-secondary)",
+                    fontSize: 13,
+                    padding: "0 2px",
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          title="Attach PDF"
+          style={{
+            width: 36,
+            height: 36,
+            minWidth: 36,
+            borderRadius: "50%",
+            background: "transparent",
+            border: "1px solid var(--border)",
+            cursor: "pointer",
+            fontSize: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-secondary)",
+          }}
+        >
+          📎
+        </button>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -146,6 +208,22 @@ export default function ChatWindow({ messages, isLoading, onSubmit }) {
         >
           ↑
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const incoming = Array.from(e.target.files || []);
+            setPendingFiles((prev) => {
+              const names = new Set(prev.map((f) => f.name));
+              return [...prev, ...incoming.filter((f) => !names.has(f.name))];
+            });
+            e.target.value = "";
+          }}
+        />
+        </div>
       </div>
     </>
   );

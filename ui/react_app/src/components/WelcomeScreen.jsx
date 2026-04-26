@@ -7,9 +7,10 @@ const PROMPTS = [
   "What endorsements are attached to the John Smith policy?",
 ];
 
-export default function WelcomeScreen({ onSubmit }) {
+export default function WelcomeScreen({ onSubmit, pendingFiles, setPendingFiles }) {
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   function handleKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey && inputValue.trim()) {
@@ -28,7 +29,9 @@ export default function WelcomeScreen({ onSubmit }) {
   function submit() {
     const val = inputValue.trim();
     if (!val) return;
-    onSubmit(val);
+    const filesToSend = [...pendingFiles];
+    setPendingFiles([]);
+    onSubmit(val, filesToSend);
     setInputValue("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -134,55 +137,129 @@ export default function WelcomeScreen({ onSubmit }) {
           background: "#fafaf9",
           padding: "16px 10%",
           display: "flex",
+          flexDirection: "column",
           gap: 8,
-          alignItems: "flex-end",
         }}
       >
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={inputValue}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about a policy, coverage, or exclusion…"
-          style={{
-            flex: 1,
-            resize: "none",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            padding: "10px 14px",
-            fontSize: 14,
-            fontFamily: "inherit",
-            outline: "none",
-            background: "#ffffff",
-            color: "var(--text-primary)",
-            overflowY: "hidden",
-            lineHeight: 1.5,
-          }}
-          onFocus={(e) => (e.target.style.borderColor = "#aaaaaa")}
-          onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
-        />
-        <button
-          onClick={submit}
-          disabled={!inputValue.trim()}
-          style={{
-            width: 36,
-            height: 36,
-            minWidth: 36,
-            borderRadius: "50%",
-            background: "var(--accent)",
-            color: "#ffffff",
-            border: "none",
-            cursor: !inputValue.trim() ? "not-allowed" : "pointer",
-            opacity: !inputValue.trim() ? 0.4 : 1,
-            fontSize: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          ↑
-        </button>
+        {pendingFiles.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {pendingFiles.map((f) => (
+              <div
+                key={f.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  background: "#f0f0ee",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                  fontSize: 12,
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span>📄</span>
+                <span>{f.name}</span>
+                <button
+                  onClick={() => setPendingFiles((prev) => prev.filter((x) => x.name !== f.name))}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-secondary)",
+                    fontSize: 13,
+                    padding: "0 2px",
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach PDF"
+            style={{
+              width: 36,
+              height: 36,
+              minWidth: 36,
+              borderRadius: "50%",
+              background: "transparent",
+              border: "1px solid var(--border)",
+              cursor: "pointer",
+              fontSize: 16,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-secondary)",
+            }}
+          >
+            📎
+          </button>
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={inputValue}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about a policy, coverage, or exclusion…"
+            style={{
+              flex: 1,
+              resize: "none",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 14,
+              fontFamily: "inherit",
+              outline: "none",
+              background: "#ffffff",
+              color: "var(--text-primary)",
+              overflowY: "hidden",
+              lineHeight: 1.5,
+            }}
+            onFocus={(e) => (e.target.style.borderColor = "#aaaaaa")}
+            onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+          />
+          <button
+            onClick={submit}
+            disabled={!inputValue.trim()}
+            style={{
+              width: 36,
+              height: 36,
+              minWidth: 36,
+              borderRadius: "50%",
+              background: "var(--accent)",
+              color: "#ffffff",
+              border: "none",
+              cursor: !inputValue.trim() ? "not-allowed" : "pointer",
+              opacity: !inputValue.trim() ? 0.4 : 1,
+              fontSize: 16,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            ↑
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const incoming = Array.from(e.target.files || []);
+              setPendingFiles((prev) => {
+                const names = new Set(prev.map((f) => f.name));
+                return [...prev, ...incoming.filter((f) => !names.has(f.name))];
+              });
+              e.target.value = "";
+            }}
+          />
+        </div>
       </div>
     </div>
   );
