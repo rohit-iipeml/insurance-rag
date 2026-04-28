@@ -143,6 +143,50 @@ def health_check() -> dict:
     return {"status": "ok", "message": "Insurance RAG API is running"}
 
 
+@app.get("/stats")
+def get_stats() -> dict:
+    if not app.state.index_loaded:
+        return {
+            "loaded": False,
+            "total_pdfs": 0,
+            "total_chunks": 0,
+            "doc_types": {},
+            "jurisdictions": [],
+            "bm25_terms": 0,
+        }
+
+    metadata = app.state.metadata
+    sources: set[str] = set()
+    doc_types: dict[str, int] = {}
+    jurisdictions: set[str] = set()
+
+    for chunk in metadata:
+        sources.add(chunk.get("source", "unknown"))
+        dt = chunk.get("doc_type", "unknown")
+        doc_types[dt] = doc_types.get(dt, 0) + 1
+        j = chunk.get("jurisdiction", "all")
+        if j != "all":
+            jurisdictions.add(j)
+
+    jurisdiction_counts: dict[str, int] = {}
+    for chunk in metadata:
+        j = chunk.get("jurisdiction", "all")
+        if j != "all":
+            jurisdiction_counts[j] = jurisdiction_counts.get(j, 0) + 1
+
+    bm25_terms = len(app.state.bm25_index.get("doc_freqs", {}))
+
+    return {
+        "loaded": True,
+        "total_pdfs": len(sources),
+        "total_chunks": len(metadata),
+        "doc_types": doc_types,
+        "jurisdictions": sorted(jurisdictions),
+        "jurisdiction_counts": jurisdiction_counts,
+        "bm25_terms": bm25_terms,
+    }
+
+
 @app.post("/ingest")
 async def ingest(files: list[UploadFile] = File(default=[])) -> dict:
     try:
@@ -411,12 +455,23 @@ async def query_stream(request: QueryRequest):
                 queue = asyncio.Queue()
 
                 def run_stream():
-                    try:
-                        for token in stream_tokens(messages, GENERATION_MODEL):
-                            asyncio.run_coroutine_threadsafe(queue.put(token), loop)
-                        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                    except Exception as e:
-                        asyncio.run_coroutine_threadsafe(queue.put(f"[ERROR] {e}"), loop)
+                    retries = 3
+                    base_delay = 15.0
+                    for attempt in range(retries):
+                        try:
+                            for token in stream_tokens(messages, GENERATION_MODEL):
+                                asyncio.run_coroutine_threadsafe(queue.put(token), loop)
+                            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+                            return
+                        except Exception as e:
+                            is_rate_limit = "429" in str(e) or "rate" in str(e).lower() or "capacity" in str(e).lower()
+                            if is_rate_limit and attempt < retries - 1:
+                                wait = base_delay * (attempt + 1)
+                                print(f"[RETRY] Stream rate limited, waiting {wait}s (attempt {attempt+1}/{retries})")
+                                time.sleep(wait)
+                                continue
+                            asyncio.run_coroutine_threadsafe(queue.put(f"[ERROR] {e}"), loop)
+                            return
 
                 import threading
                 threading.Thread(target=run_stream, daemon=True).start()
