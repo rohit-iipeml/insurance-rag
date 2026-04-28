@@ -36,10 +36,20 @@ def is_pii_query(query: str) -> bool:
     return any(p.search(query) for p in _PII_PATTERNS)
 
 
+_INSURANCE_TERMS = (
+    "cover", "claim", "policy", "deductible", "premium", "endorse", "amendment",
+    "exclusion", "liable", "flood", "fire", "damage", "insur",
+)
+
+
 def is_conversational(query: str) -> bool:
     # Conversational queries are caught before retrieval to avoid burning
     # embedding API calls on inputs that need no document context.
     normalised = query.lower().strip()
+    # A query containing a substantive insurance term is never purely conversational,
+    # even if it starts with a greeting — let the LLM classify it instead.
+    if any(term in normalised for term in _INSURANCE_TERMS):
+        return False
     if normalised in _CONVERSATIONAL_EXACT:
         return True
     if any(normalised.startswith(prefix) for prefix in _CONVERSATIONAL_PREFIXES):

@@ -269,7 +269,7 @@ async def query(request: QueryRequest) -> dict:
 
         analysis = detect_intent_and_decompose(rewritten_q)
         intent                 = analysis.get("intent", "retrieval")
-        sub_queries            = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
+        sub_queries            = analysis.get("sub_queries") or [{"query": rewritten_q, "doc_type": None}]
         answer_template        = analysis.get("answer_template", "general")
         refusal_reason         = analysis.get("refusal_reason")
         effective_jurisdiction = request.jurisdiction or analysis.get("jurisdiction")
@@ -351,7 +351,7 @@ async def query_stream(request: QueryRequest):
 
         analysis               = detect_intent_and_decompose(rewritten_q)
         intent                 = analysis.get("intent", "retrieval")
-        sub_queries            = analysis.get("sub_queries", [{"query": rewritten_q, "doc_type": None}])
+        sub_queries            = analysis.get("sub_queries") or [{"query": rewritten_q, "doc_type": None}]
         answer_template        = analysis.get("answer_template", "general")
         refusal_reason         = analysis.get("refusal_reason")
         effective_jurisdiction = request.jurisdiction or analysis.get("jurisdiction")
