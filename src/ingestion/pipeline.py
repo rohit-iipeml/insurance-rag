@@ -1,9 +1,11 @@
+import hashlib
 import json
 import math
 import os
 import re
 import time
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -316,30 +318,124 @@ def load_bm25_index(store_dir: Path) -> dict:
     return json.loads((store_dir / "bm25_index.json").read_text(encoding="utf-8"))
 
 
+def compute_file_hash(path: Path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(8192), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def ingest_pdfs(pdf_paths: list[Path], store_dir: Path) -> dict:
     """Full pipeline: extract → chunk across all PDFs, then embed in one
     batched pass, then persist. Embedding all chunks together maximises batch
     efficiency and keeps API calls predictable."""
-    all_chunks: list[dict] = []
+    # --- Step 1: Load existing store upfront ---
+    if (store_dir / "embeddings.npy").exists() and (store_dir / "metadata.json").exists():
+        existing_embeddings, existing_metadata = load_vector_store(store_dir)
+        # Build a source → hash map from the first chunk of each source that has a hash
+        existing_hashes: dict[str, str] = {}
+        for m in existing_metadata:
+            src = m["source"]
+            if src not in existing_hashes and "file_hash" in m:
+                existing_hashes[src] = m["file_hash"]
+    else:
+        existing_embeddings = None
+        existing_metadata = []
+        existing_hashes = {}
+
+    # --- Step 2: Separate files into embed vs skip ---
+    to_embed: list[tuple[Path, str]] = []   # (path, hash)
+    skipped_sources: list[str] = []
 
     for pdf_path in pdf_paths:
+        file_hash = compute_file_hash(pdf_path)
+        if pdf_path.name in existing_hashes and existing_hashes[pdf_path.name] == file_hash:
+            skipped_sources.append(pdf_path.name)
+        else:
+            to_embed.append((pdf_path, file_hash))
+
+    # --- Step 3: Chunk and embed only changed / new files ---
+    all_chunks: list[dict] = []
+    for pdf_path, file_hash in to_embed:
         pages  = extract_text_from_pdf(pdf_path)
         chunks = chunk_document(pages, pdf_path.name)
+        for chunk in chunks:
+            chunk["file_hash"] = file_hash
         all_chunks.extend(chunks)
 
-    embedded = embed_chunks(all_chunks)
-    dropped = len(all_chunks) - len(embedded)
-    if dropped > 0:
-        print(f"[WARN] {dropped} chunks failed embedding and were excluded from the index.")
-    save_to_vector_store(embedded, store_dir)
+    if all_chunks:
+        embedded = embed_chunks(all_chunks)
+        dropped = len(all_chunks) - len(embedded)
+        if dropped > 0:
+            print(f"[WARN] {dropped} chunks failed embedding and were excluded from the index.")
+        uploaded_at = datetime.now(timezone.utc).isoformat()
+        for chunk in embedded:
+            chunk["uploaded_at"] = uploaded_at
+    else:
+        embedded = []
+        dropped = 0
 
-    bm25_index = build_bm25_plus_index(embedded)
+    # --- Step 4: Early return if nothing changed ---
+    if not embedded:
+        bm25_index = load_bm25_index(store_dir) if (store_dir / "bm25_index.json").exists() else build_bm25_plus_index([])
+        return {
+            "total_pdfs":       len(pdf_paths),
+            "chunks_added":     0,
+            "total_chunks":     len(existing_metadata),
+            "chunks_dropped":   0,
+            "replaced_sources": [],
+            "skipped_sources":  skipped_sources,
+            "store_dir":        str(store_dir),
+            "bm25_unique_terms": len(bm25_index.get("doc_freqs", {})),
+        }
+
+    # --- Step 5: Merge ---
+    new_sources = {c["source"] for c in embedded}
+
+    if existing_metadata:
+        keep_mask = [m["source"] not in new_sources for m in existing_metadata]
+        kept_metadata   = [m for m, k in zip(existing_metadata, keep_mask) if k]
+        kept_embeddings = (
+            existing_embeddings[keep_mask]
+            if any(keep_mask)
+            else np.empty((0, existing_embeddings.shape[1]), dtype=np.float32)
+        )
+        replaced_sources = sorted(new_sources & {m["source"] for m in existing_metadata})
+    else:
+        kept_metadata    = []
+        kept_embeddings  = np.empty((0, len(embedded[0]["embedding"])), dtype=np.float32)
+        replaced_sources = []
+
+    new_embeddings = np.array([c["embedding"] for c in embedded], dtype=np.float32)
+    combined_embeddings = (
+        np.vstack([kept_embeddings, new_embeddings])
+        if kept_embeddings.shape[0] > 0
+        else new_embeddings
+    )
+    combined_metadata = kept_metadata + [
+        {k: v for k, v in c.items() if k != "embedding"} for c in embedded
+    ]
+
+    # --- Step 6: Save ---
+    store_dir.mkdir(parents=True, exist_ok=True)
+    np.save(store_dir / "embeddings.npy", combined_embeddings)
+    (store_dir / "metadata.json").write_text(
+        json.dumps(combined_metadata, indent=2), encoding="utf-8"
+    )
+
+    bm25_index = build_bm25_plus_index(
+        [{**m, "embedding": []} for m in combined_metadata]
+    )
     save_bm25_index(bm25_index, store_dir)
 
     return {
-        "total_pdfs":        len(pdf_paths),
-        "total_chunks":      len(embedded),
-        "chunks_dropped":    dropped,
-        "store_dir":         str(store_dir),
+        "total_pdfs":       len(pdf_paths),
+        "chunks_added":     len(embedded),
+        "total_chunks":     len(combined_metadata),
+        "chunks_dropped":   dropped,
+        "replaced_sources": replaced_sources,
+        "skipped_sources":  skipped_sources,
+        "store_dir":        str(store_dir),
         "bm25_unique_terms": len(bm25_index["doc_freqs"]),
     }

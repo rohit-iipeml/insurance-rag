@@ -174,7 +174,18 @@ export default function UploadPanel() {
               color: "#166534",
             }}
           >
-            ✓ Ingested {result.total_pdfs} PDF(s) into {result.total_chunks} chunks.
+            ✓ Added {result.chunks_added} chunks from {result.total_pdfs} PDF(s).
+            Knowledge base now contains {result.total_chunks} total chunks.
+            {result.replaced_sources && result.replaced_sources.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 13 }}>
+                Updated: {result.replaced_sources.join(", ")}
+              </div>
+            )}
+            {result.skipped_sources && result.skipped_sources.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 13 }}>
+                Skipped (unchanged): {result.skipped_sources.join(", ")}
+              </div>
+            )}
           </div>
         )}
 

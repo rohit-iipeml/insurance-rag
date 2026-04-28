@@ -170,12 +170,21 @@ async def ingest(files: list[UploadFile] = File(default=[])) -> dict:
         app.state.bm25_index  = load_bm25_index(VECTOR_STORE_DIR)
         app.state.index_loaded = True
 
+        skipped = result["skipped_sources"]
         return {
             "status":            "success",
             "total_pdfs":        result["total_pdfs"],
+            "chunks_added":      result["chunks_added"],
             "total_chunks":      result["total_chunks"],
+            "replaced_sources":  result["replaced_sources"],
+            "skipped_sources":   skipped,
             "bm25_unique_terms": result["bm25_unique_terms"],
-            "message":           f"Ingested {result['total_pdfs']} PDF(s) into {result['total_chunks']} chunks.",
+            "message":           (
+                f"Added {result['chunks_added']} chunks from "
+                f"{result['total_pdfs'] - len(skipped)} new/updated PDF(s). "
+                f"Knowledge base now contains {result['total_chunks']} chunks."
+                + (f" Skipped {len(skipped)} unchanged file(s)." if skipped else "")
+            ),
         }
     except HTTPException:
         raise
