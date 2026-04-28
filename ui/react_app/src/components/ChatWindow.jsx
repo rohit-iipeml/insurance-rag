@@ -1,16 +1,71 @@
 import { useRef, useEffect, useState } from "react";
 import MessageBubble from "./MessageBubble";
 
-const dotStyle = (delay) => ({
-  display: "inline-block",
-  width: 6,
-  height: 6,
-  borderRadius: "50%",
-  background: "var(--text-secondary)",
-  margin: "0 2px",
-  animation: "dotPulse 1.2s ease-in-out infinite",
-  animationDelay: delay,
-});
+const PIPELINE_STAGES = [
+  { label: "Rewriting query",         maxMs: 3000  },
+  { label: "Detecting intent",        maxMs: 7000  },
+  { label: "Searching knowledge base",maxMs: 13000 },
+  { label: "Generating answer",       maxMs: Infinity },
+];
+
+function PipelineLoader() {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Date.now() - start), 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const stageIndex = PIPELINE_STAGES.findIndex((s) => elapsed < s.maxMs);
+  const stage = PIPELINE_STAGES[stageIndex === -1 ? PIPELINE_STAGES.length - 1 : stageIndex];
+  const secs = (elapsed / 1000).toFixed(1);
+
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16, paddingLeft: 2 }}>
+      <div style={{
+        background: "#f7f7f5",
+        borderRadius: "12px 12px 12px 4px",
+        padding: "10px 16px",
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: 8,
+        minWidth: 220,
+      }}>
+        {/* Stage rows */}
+        {PIPELINE_STAGES.map((s, i) => {
+          const done    = i < stageIndex || (stageIndex === -1 && i < PIPELINE_STAGES.length - 1);
+          const active  = s.label === stage.label;
+          return (
+            <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: done ? "var(--accent)" : active ? "var(--accent)" : "var(--border)",
+                opacity: done ? 0.4 : 1,
+                animation: active ? "stagePulse 1.2s ease-in-out infinite" : "none",
+              }} />
+              <span style={{
+                fontSize: 12,
+                color: done ? "var(--text-secondary)" : active ? "var(--text-primary)" : "var(--border)",
+                fontWeight: active ? 500 : 400,
+              }}>
+                {done ? "✓ " : ""}{s.label}
+              </span>
+            </div>
+          );
+        })}
+
+        {/* Timer */}
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+          {secs}s elapsed
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatWindow({ messages, isLoading, onSubmit, pendingFiles, setPendingFiles, onSourceClick }) {
   const scrollRef = useRef(null);
@@ -53,9 +108,9 @@ export default function ChatWindow({ messages, isLoading, onSubmit, pendingFiles
   return (
     <>
       <style>{`
-        @keyframes dotPulse {
-          0%, 80%, 100% { opacity: 0.2; }
-          40% { opacity: 1; }
+        @keyframes stagePulse {
+          0%, 80%, 100% { opacity: 0.3; transform: scale(1); }
+          40% { opacity: 1; transform: scale(1.3); }
         }
       `}</style>
 
@@ -78,20 +133,7 @@ export default function ChatWindow({ messages, isLoading, onSubmit, pendingFiles
         ))}
 
         {isLoading && messages[messages.length - 1]?.content === "" && (
-          <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16, paddingLeft: 2 }}>
-            <div style={{
-              background: "#f7f7f5",
-              borderRadius: "12px 12px 12px 4px",
-              padding: "10px 16px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 2,
-            }}>
-              <span style={dotStyle("0s")} />
-              <span style={dotStyle("0.4s")} />
-              <span style={dotStyle("0.8s")} />
-            </div>
-          </div>
+          <PipelineLoader />
         )}
       </div>
 
