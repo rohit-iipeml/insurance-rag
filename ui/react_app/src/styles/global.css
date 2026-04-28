@@ -40,3 +40,11 @@ body {
 .assistant-content li { margin-bottom: 4px; line-height: 1.55; }
 .assistant-content strong { font-weight: 600; color: var(--text-primary); }
 .assistant-content code { font-size: 12px; background: #f0f0ec; padding: 1px 5px; border-radius: 4px; }
+
+@keyframes messageIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.message-enter {
+  animation: messageIn 0.2s ease-out forwards;
+}

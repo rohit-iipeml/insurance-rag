@@ -93,6 +93,7 @@ then explain what it means in context.
 
 Citation format: the context chunks below are numbered [1], [2], [3] etc. \
 After every factual claim, cite the chunk number inline as [1] or [2] etc. \
+To cite multiple chunks for one claim, use separate brackets: [1][2] — never combine them as [1, 2] or [1,2]. \
 Use only the numbers corresponding to chunks that actually support the claim. \
 Do not use chunk_id strings. Do not use [SOURCE: ...] format.
 
@@ -275,7 +276,15 @@ def verify_citations(answer: str, retrieved_chunks: list[dict]) -> dict:
     # lead an adjuster to a non-existent policy clause. Verification happens
     # in Python, not via LLM prompt, so it is deterministic and cannot be
     # overridden by prompt injection.
-    cited_nums = re.findall(r"\[(\d+)\]", answer)
+    #
+    # Normalise comma-separated citations like [1, 2] → [1][2] before parsing,
+    # as a safety net for LLM format drift despite prompt instructions.
+    normalised = re.sub(
+        r'\[(\d+(?:,\s*\d+)+)\]',
+        lambda m: "".join(f"[{n.strip()}]" for n in m.group(1).split(",")),
+        answer,
+    )
+    cited_nums = re.findall(r"\[(\d+)\]", normalised)
     cited_nums = [n for n in dict.fromkeys(cited_nums)]  # deduplicate, preserve order
 
     valid_range = set(str(i) for i in range(1, len(retrieved_chunks) + 1))
@@ -292,7 +301,7 @@ def verify_citations(answer: str, retrieved_chunks: list[dict]) -> dict:
     }
 
 
-def format_sources(chunks: list[dict]) -> list[dict]:
+def format_sources(chunks: list[dict], citation_nums: dict[str, str] | None = None) -> list[dict]:
     seen_chunk_ids: set[str] = set()
     sources: list[dict] = []
     for chunk in chunks:
@@ -303,13 +312,14 @@ def format_sources(chunks: list[dict]) -> list[dict]:
         seen_chunk_ids.add(cid)
         chunk_text = meta.get("text", "")
         sources.append({
-            "chunk_id":   cid,
-            "source":     meta.get("source",        "unknown"),
-            "page":       meta.get("page_start",    0),
-            "section":    meta.get("section_title", "unknown"),
-            "doc_type":   meta.get("doc_type",      "unknown"),
-            "is_session": meta.get("is_session",    False),
-            "chunk_text": chunk_text[:150] if chunk_text else "",
+            "chunk_id":     cid,
+            "source":       meta.get("source",        "unknown"),
+            "page":         meta.get("page_start",    0),
+            "section":      meta.get("section_title", "unknown"),
+            "doc_type":     meta.get("doc_type",      "unknown"),
+            "is_session":   meta.get("is_session",    False),
+            "chunk_text":   chunk_text[:150] if chunk_text else "",
+            "citation_num": citation_nums.get(cid, "") if citation_nums else "",
         })
     return sources
 

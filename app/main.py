@@ -488,10 +488,24 @@ async def query_stream(request: QueryRequest):
                         citation_check = verify_citations(full_answer, merged["chunks"])
                         cited_indices = {int(n) - 1 for n in citation_check["verified_citations"] if n.isdigit()}
                         cited_chunks = [merged["chunks"][i] for i in sorted(cited_indices) if i < len(merged["chunks"])]
-                        sources_data = format_sources(cited_chunks if cited_chunks else merged["chunks"])
+                        # Build chunk_id → citation number mapping so source cards can display the original [N]
+                        chunk_id_to_citation: dict[str, str] = {}
+                        for n in citation_check["verified_citations"]:
+                            if n.isdigit():
+                                idx = int(n) - 1
+                                if idx < len(merged["chunks"]):
+                                    cid = merged["chunks"][idx].get("chunk_id", "")
+                                    if cid:
+                                        chunk_id_to_citation[cid] = n
+                        sources_data = format_sources(
+                            cited_chunks if cited_chunks else merged["chunks"],
+                            citation_nums=chunk_id_to_citation,
+                        )
                         meta_event = json.dumps({
                             "sources": sources_data,
                             "citation_check": citation_check,
+                            "answer_template": answer_template,
+                            "intent": intent,
                         })
                         yield f"data: [SOURCES]{meta_event}\n\n"
                         break

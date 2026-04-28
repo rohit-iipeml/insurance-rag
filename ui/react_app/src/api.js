@@ -129,6 +129,12 @@ export async function queryRAGStream(query, chatHistory, sessionId, onToken, onD
   }
 }
 
+export async function getStats() {
+  const res = await fetch(`${BASE_URL}/stats`);
+  if (!res.ok) throw new Error("Failed to fetch stats");
+  return res.json();
+}
+
 export async function queryRAG(query, chatHistory) {
   const res = await fetch(`${BASE_URL}/query`, {
     method: "POST",

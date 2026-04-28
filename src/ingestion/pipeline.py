@@ -41,7 +41,7 @@ def extract_text_from_pdf(pdf_path: Path) -> list[dict]:
     return pages
 
 
-def detect_document_type(filename: str) -> str:
+def detect_document_type(filename: str, first_page_text: str = "") -> str:
     """Tagging doc type at ingest time lets the retriever filter by category
     (e.g. only search endorsements) without re-reading file contents."""
     stem = Path(filename).stem.lower()
@@ -53,6 +53,25 @@ def detect_document_type(filename: str) -> str:
         return "amendment"
     if stem.startswith("declarations"):
         return "declarations"
+
+    # Filename did not match — fall back to first-page content keywords.
+    # Order matters: base_policy checked before declarations because policy
+    # forms contain "DECLARATIONS" as an internal section header, which would
+    # cause a false-positive if declarations were checked first.
+    text = first_page_text.upper()
+    if "AMENDATORY ENDORSEMENT" in text or (
+        "AMENDMENT" in text and "ENDORSEMENT" not in text
+    ):
+        return "amendment"
+    if "ENDORSEMENT" in text:
+        return "endorsement"
+    if any(k in text for k in ("HOMEOWNERS POLICY", "HOMEOWNERS 3", "HOMEOWNERS\n",
+                                "RENTERS POLICY", "COMMERCIAL POLICY",
+                                "INSURING AGREEMENT", "POLICY AGREEMENT")):
+        return "base_policy"
+    if "DECLARATIONS PAGE" in text or "POLICY DECLARATIONS" in text:
+        return "declarations"
+
     return "unknown"
 
 
@@ -103,7 +122,8 @@ def chunk_document(pages: list[dict], filename: str) -> list[dict]:
     """Section-aware chunking keeps legal cross-references intact. Splitting
     mid-clause (e.g. inside Section 7.3) would strip the section number from
     the surrounding text, making cosine retrieval miss it entirely."""
-    doc_type     = detect_document_type(filename)
+    first_page_text = pages[0]["text"] if pages else ""
+    doc_type     = detect_document_type(filename, first_page_text)
     jurisdiction = detect_jurisdiction(filename)
     stem         = Path(filename).stem
 
