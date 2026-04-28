@@ -269,7 +269,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 ## Known Limitations and Future Improvements
 
 - **Memory-mapped numpy** — for corpora exceeding 100k chunks, np.memmap would reduce memory footprint
-- **Sentence-level hallucination check** — citation verification confirms cited chunk numbers are in range but does not verify that the cited chunk text actually entails the claim; a dedicated NLI pass would close this gap
+- **Sentence-level hallucination check** — citation verification confirms cited chunk numbers are in range but does not verify that the cited chunk text actually entails the claim. A dedicated NLI pass (e.g. roberta-large-mnli) would close this gap but adds a model call per sentence — significant latency and cost for marginal gain at this corpus size, where mistral-large rarely misrepresents short factual policy clauses it has directly in context.
 - **API authentication** — endpoints have no auth layer; in production, API key or JWT middleware should be added
 - **Rate limiting** — no per-client rate limiting on query or ingest endpoints
 
