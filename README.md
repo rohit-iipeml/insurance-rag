@@ -15,11 +15,22 @@ graph TD
     D --> F[BM25+ Index]
     E --> G[embeddings.npy]
     F --> H[bm25_index.json]
-    G --> I[Vector Store]
+    G --> I[Global Vector Store]
     H --> I
-    J[User Query] --> K[POST /query]
-    K --> L[PII and Conversational Guard]
-    L --> M[Intent Detection + Query Decomposition]
+
+    A2[Session PDFs] --> B2[POST /session/ingest]
+    B2 --> C2[Extract + Chunk + Embed]
+    C2 --> I2[Session Store - RAM only]
+    I2 -->|expires after 2hr idle| DEL[Cleanup]
+
+    J[User Query] --> K[POST /query or /query/stream]
+    K --> L[PII Guard - regex]
+    L -->|PII detected| REF1[Hard Refuse]
+    L --> L2[Conversational Guard - keyword]
+    L2 -->|greeting/meta| REF2[Canned Reply]
+    L2 --> RW[Query Rewrite - mistral-small + chat history]
+    RW --> M[Intent Detection + Query Decomposition - mistral-large]
+    M -->|pii / legal / out_of_scope| REF3[Refusal Message]
     M --> N[Sub-query 1]
     M --> O[Sub-query 2]
     M --> P[Sub-query N]
@@ -29,14 +40,16 @@ graph TD
     O --> R
     Q --> S[RRF Fusion + Diversity Cap]
     R --> S
-    S --> T{Similarity Threshold}
-    T -->|Below 0.50| U[Insufficient Evidence]
-    T -->|Above 0.50| V2[LLM Reranking]
-    V2 --> V[Mistral Generation]
-    V --> W[Citation Verification]
-    W --> X[Structured Response]
     I --> Q
     I --> R
+    I2 -->|if session_id present| Q
+    I2 -->|if session_id present| R
+    S --> T{Similarity Threshold 0.50}
+    T -->|Below| U[Insufficient Evidence]
+    T -->|Above| V2[LLM Reranking - mistral-small]
+    V2 --> V[Generation - mistral-large + template + fraud awareness]
+    V --> W[Citation Verification]
+    W --> X[Structured Response / SSE Stream]
 ```
 
 ---
@@ -91,15 +104,21 @@ sequenceDiagram
     G-->>API: Pass / Refuse
     API->>G: Conversational check
     G-->>API: Pass / Route to canned response
+    API->>LLM: Query rewrite (mistral-small + chat history)
+    LLM-->>API: standalone rewritten query
     API->>LLM: Intent detection + decomposition
     LLM-->>API: intent, sub_queries, template
     loop For each sub-query
         API->>LLM: Embed sub-query
         LLM-->>API: query vector
-        API->>VS: Semantic search (cosine)
+        API->>VS: Semantic search (cosine) — global store
         VS-->>API: top-10 semantic
-        API->>R: BM25+ search
+        API->>R: BM25+ search — global store
         R-->>API: top-10 keyword
+        opt session_id present
+            API->>VS: Semantic + BM25+ — session store
+            VS-->>API: session results
+        end
         API->>API: RRF fusion + diversity cap
     end
     API->>API: Merge sub-query results
@@ -121,14 +140,18 @@ sequenceDiagram
 | No external RAG libraries | All retrieval implemented from scratch using numpy and pure Python |
 | No third-party vector database | Embeddings stored as numpy matrix, metadata as JSON |
 | BM25+ from scratch | Custom tokenizer preserving legal identifiers, BM25+ formula with delta=1.0 |
-| Citation verification | Post-generation regex parses chunk IDs, verified against retrieved set in Python |
-| Insufficient evidence refusal | Cosine similarity threshold 0.50 — returns explicit refusal message |
+| Citation verification | Post-generation regex parses chunk IDs, verified against retrieved set in Python — deterministic, cannot be overridden by prompt injection |
+| Insufficient evidence refusal | Cosine similarity threshold 0.50 — returns explicit refusal message rather than hallucinating an answer |
 | Answer shaping | 5 templates: coverage_determination, limit_lookup, override_conflict, definition, general |
-| PII refusal | Regex detection of SSN, phone, email, credit card before any API call |
+| PII refusal | Regex detection of SSN, phone, email, credit card — fires before any API call so sensitive data never leaves the process |
 | Query decomposition | Single Mistral call decomposes query into 2-4 doc_type-targeted sub-queries |
 | Diversity cap | Max 3 chunks per doc_type prevents semantic collapse into single document type |
-| Security | PII filter before API calls, allow_pickle=False on numpy load, try/finally temp cleanup |
+| Security | PII filter before API calls, allow_pickle=False on numpy load, try/finally temp cleanup, 50MB file size cap |
 | LLM-based reranking | After RRF fusion, Mistral re-scores candidate chunks for answerability before generation |
+| Query rewrite | Follow-up questions rewritten into standalone queries using chat history (mistral-small, last 2 exchanges) |
+| Output-centric fraud awareness | Generation prompt instructs the LLM to detect outcome-first framing and append an insurance fraud warning — answers the legitimate coverage question first, adds warning only when framing signals deliberate staging |
+| Incremental ingestion with hash dedup | MD5 hash computed per file at ingest time — unchanged files are skipped entirely, only new or modified PDFs are re-embedded |
+| Session-scoped ingestion | POST /session/ingest embeds PDFs into an in-memory per-session store — merged with global results at query time, expires after 2hr idle |
 
 ---
 
@@ -137,7 +160,7 @@ sequenceDiagram
 ```
 Insurance_rag/
 ├── app/
-│   └── main.py              # FastAPI app — /health, /ingest, /query endpoints
+│   └── main.py              # FastAPI app — /health, /stats, /ingest, /session/ingest, /query, /query/stream, /pdf/* endpoints
 ├── src/
 │   ├── ingestion/
 │   │   └── pipeline.py      # PDF extraction, chunking, embedding, BM25+ index
@@ -152,7 +175,8 @@ Insurance_rag/
 │           ├── api.js
 │           └── components/  # Sidebar, ChatWindow, MessageBubble, UploadPanel, WelcomeScreen
 ├── data/
-│   └── raw_docs/            # PDF knowledge base (19 documents)
+│   ├── raw_docs/            # PDF knowledge base (19 documents, permanent)
+│   └── session_docs/        # Per-session uploaded PDFs (cleaned after 2hr idle)
 ├── vector_store/            # embeddings.npy, metadata.json, bm25_index.json
 └── scripts/
     ├── generate_docs.py     # Generates synthetic insurance PDFs via Mistral API
@@ -218,9 +242,13 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | /health | GET | Health check |
-| /ingest | POST | Ingest PDFs — upload files or use existing docs in data/raw_docs/ |
-| /query | POST | Query the knowledge base |
-| /query/stream | POST | Stream answer tokens via SSE — same pipeline as /query with token-by-token delivery |
+| /stats | GET | Knowledge base stats — total PDFs, chunks, BM25 terms, per-state chunk counts |
+| /ingest | POST | Ingest PDFs into the global knowledge base — upload files or use existing docs in data/raw_docs/. Unchanged files (same MD5) are skipped. |
+| /session/ingest | POST | Ingest PDFs into a session-scoped in-memory store. Pass `session_id` form field. Results merged with global KB at query time. Expires after 2hr idle. |
+| /query | POST | Query the knowledge base — returns full answer + sources + citation check |
+| /query/stream | POST | Same pipeline as /query but streams generation tokens via SSE. Sources and citation check sent as a final `[SOURCES]` event after `[DONE]`. |
+| /pdf/global/{filename} | GET | Serve a PDF from the global knowledge base for inline viewing |
+| /pdf/{session_id}/{filename} | GET | Serve a session-uploaded PDF for inline viewing |
 
 ---
 
@@ -241,9 +269,10 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 ## Known Limitations and Future Improvements
 
 - **Neighbor chunk inclusion** — retrieving adjacent chunks would help when answers span section boundaries
-- **Incremental ingestion** — currently re-embeds entire corpus on each ingest call; a document hash check would skip unchanged files
 - **Memory-mapped numpy** — for corpora exceeding 100k chunks, np.memmap would reduce memory footprint
-- **Multi-tenant support** — user-level document isolation not yet implemented
+- **Sentence-level hallucination check** — citation verification confirms cited chunk numbers are in range but does not verify that the cited chunk text actually entails the claim; a dedicated NLI pass would close this gap
+- **API authentication** — endpoints have no auth layer; in production, API key or JWT middleware should be added
+- **Rate limiting** — no per-client rate limiting on query or ingest endpoints
 
 ---
 
