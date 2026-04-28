@@ -268,7 +268,6 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The FastAPI
 
 ## Known Limitations and Future Improvements
 
-- **Neighbor chunk inclusion** — retrieving adjacent chunks would help when answers span section boundaries
 - **Memory-mapped numpy** — for corpora exceeding 100k chunks, np.memmap would reduce memory footprint
 - **Sentence-level hallucination check** — citation verification confirms cited chunk numbers are in range but does not verify that the cited chunk text actually entails the claim; a dedicated NLI pass would close this gap
 - **API authentication** — endpoints have no auth layer; in production, API key or JWT middleware should be added
